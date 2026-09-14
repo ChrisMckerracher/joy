@@ -19,13 +19,9 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { alertError, guarded } from '@/utils/guardAsync';
 import { resolveRevealScroll, rowContainsMessage, RevealLayout, RevealTarget } from './searchReveal';
 import { useSessionSearch } from '@/hooks/useSessionSearch';
-import { shouldFollowBottom } from './chatFollow';
+import { performBottomFollow, isFollowInteracting, updateFollowScroll, type FollowScrollState } from './chatFollow';
 
 const SCROLL_THRESHOLD = 300;
-// "Live" (pinned to the newest message) is a SEPARATE, much tighter band than
-// the 300px scroll-button threshold: someone 250px up is reading, and their
-// position must not be discarded as "basically at the bottom".
-const LIVE_THRESHOLD = 48;
 
 // Saved viewport per session, surviving unmounts AND screen retention (the
 // terminal-pane push keeps this screen mounted — only navigation focus moves).
@@ -221,10 +217,12 @@ const ChatListInternal = React.memo(React.forwardRef<ChatListHandle, {
     const orderedItemsRef = React.useRef(orderedItems);
     orderedItemsRef.current = orderedItems;
 
-    // Whether the user is pinned within LIVE_THRESHOLD of the end. Starts true:
+    // Whether the user is live (returns within 48px and has not scrolled away).
+    // Content can grow beyond that band before a follow catches up. Starts true:
     // a blur before the first scroll event must not manufacture a 'reading'
     // snapshot out of default-initialized refs.
     const nearBottomRef = React.useRef(true);
+    const followScrollRef = React.useRef<FollowScrollState | null>(null);
 
     // Tracks which groups are explicitly collapsed. Groups start collapsed;
     // pending approval groups are the only ones we auto-expand.
@@ -504,11 +502,13 @@ const ChatListInternal = React.memo(React.forwardRef<ChatListHandle, {
     // scroll straight back down (chatFollow.ts). Only one of the two may run —
     // both together fight the viewport mid-stream.
     const handleScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
-        const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
-        const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
+        const { contentOffset } = e.nativeEvent;
+        const scroll = updateFollowScroll(followScrollRef.current, e.nativeEvent);
+        followScrollRef.current = scroll;
+        const { distanceFromBottom } = scroll;
         // Refs only — the snapshot is committed at lifecycle boundaries, never
         // from the scroll stream (see SavedViewport).
-        nearBottomRef.current = distanceFromBottom <= LIVE_THRESHOLD;
+        nearBottomRef.current = scroll.nearBottom;
         const next = distanceFromBottom > SCROLL_THRESHOLD;
         if (next !== showScrollButtonRef.current) {
             showScrollButtonRef.current = next;
@@ -676,26 +676,35 @@ const ChatListInternal = React.memo(React.forwardRef<ChatListHandle, {
     // With maintainVisibleContentPosition the viewport stays anchored to the
     // row it was on, so new content at the bottom simply extends below it;
     // someone pinned to the newest message has to be moved down explicitly.
-    // Done only while they are within the same 48px band that makes a saved
-    // viewport 'live', and never while a finger is down or a fling is still
-    // running — releasing near the bottom re-arms it, scrolling away disarms
-    // it, and the down button is the way back (chatFollow.ts).
+    // Done only while the viewport is 'live': not scrolling away, even by a
+    // few pixels. A downward return within 48px re-arms it;
+    // releasing an upward drag does not. Native drag/momentum also guards it.
+    // Content growth keeps live mode until the follow catches up.
+    // RN-Web has no drag/momentum callbacks: wheel input supplies its guard,
+    // and scroll direction keeps follow disabled after an upward gesture ends.
+    // The down button is the explicit way back (chatFollow.ts).
     const interactingRef = React.useRef(false);
-    const handleScrollBeginDrag = useCallback(() => { interactingRef.current = true; }, []);
-    const handleScrollEndDrag = useCallback(() => { interactingRef.current = false; }, []);
+    const wheelUntilRef = React.useRef(0);
+    const handleScrollBeginDrag = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+        interactingRef.current = true;
+        handleScroll(e); // Seed direction even before the first onScroll.
+    }, [handleScroll]);
+    const handleScrollEndDrag = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+        handleScroll(e); // The final drag position can precede a throttled onScroll.
+        interactingRef.current = false;
+    }, [handleScroll]);
     const handleMomentumBegin = useCallback(() => { interactingRef.current = true; }, []);
-    const handleMomentumEnd = useCallback(() => { interactingRef.current = false; }, []);
+    const handleMomentumEnd = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+        handleScroll(e);
+        interactingRef.current = false;
+    }, [handleScroll]);
     const followBottom = useCallback(() => {
-        const ok = shouldFollowBottom({
+        performBottomFollow({
             loaded: restoredRef.current,
             restoring: restoreInFlightRef.current,
             nearBottom: nearBottomRef.current,
-            interacting: interactingRef.current,
-        });
-        if (!ok) return;
-        // Not animated: a stream updates several times a second, and an
-        // animation still in flight when the next one starts is the jitter.
-        flatListRef.current?.scrollToEnd({ animated: false });
+            interacting: isFollowInteracting(interactingRef.current, wheelUntilRef.current, Date.now()),
+        }, flatListRef.current);
     }, []);
     // New rows and streamed growth: after the list has committed them (next
     // frame), then again when the real measured content size lands — the
@@ -818,12 +827,15 @@ const ChatListInternal = React.memo(React.forwardRef<ChatListHandle, {
         guarded(() => sync.loadOlderMessages(sessionId), alertError())();
     }, [sessionId, hasMoreOlder, isLoadingOlder]);
 
-    // On macOS/web, Shift+wheel swaps deltaX/deltaY — restore vertical scrolling
+    // RN-Web has no wheel gesture boundaries. Keep the guard through wheel
+    // bursts (including trackpad inertia) and past its 100ms final onScroll.
+    // Also restore vertical scrolling when Shift+wheel swaps deltaX/deltaY.
     React.useEffect(() => {
         if (Platform.OS !== 'web') return;
         const node = (flatListRef.current as any)?.getScrollableNode?.() as HTMLElement | undefined;
         if (!node) return;
         const handler = (e: WheelEvent) => {
+            wheelUntilRef.current = Date.now() + 150;
             if (e.shiftKey && Math.abs(e.deltaX) > 0 && Math.abs(e.deltaY) < 1) {
                 node.scrollTop += e.deltaX;
                 e.preventDefault();
