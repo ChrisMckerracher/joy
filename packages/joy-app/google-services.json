@@ -7,6 +7,25 @@
   "client": [
     {
       "client_info": {
+        "mobilesdk_app_id": "1:437106233409:android:293f0b19d0bec6c484b6c0",
+        "android_client_info": {
+          "package_name": "vip.faraz.joy.edge"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD3pnvwxk-ccMrEqiXUr3n5l0RxqlIlJhg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
         "mobilesdk_app_id": "1:437106233409:android:9b227ff2d270836484b6c0",
         "android_client_info": {
           "package_name": "vip.faraz.joy.preview"

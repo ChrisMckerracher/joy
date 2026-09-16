@@ -2,20 +2,36 @@ const { execFileSync } = require('node:child_process');
 
 const variant = process.env.APP_ENV || 'development';
 const name = {
-    development: "Joy",
+    // dev and edge both ride alongside preview on the same device, so each
+    // needs a name you can tell apart on the home screen.
+    development: "Joy (dev)",
+    edge: "Joy (edge)",
     preview: "Joy",
     production: "Joy"
 }[variant];
 const bundleId = {
     development: "vip.faraz.joy.dev",
+    edge: "vip.faraz.joy.edge",
     preview: "vip.faraz.joy.preview",
     production: "vip.faraz.joy"
 }[variant];
 const consoleLoggingDefault = {
     development: true,
+    edge: true,
     preview: true,
     production: false,
 }[variant];
+// The OTA channel this binary polls. One word per variant, the same word in
+// every place: eas.json build profile, channel, branch, bundle id suffix.
+// This MUST match the profile's `channel` — the requestHeaders entry below
+// overrides whatever EAS injects, so a mismatch means the build silently
+// never sees its own updates.
+const updateChannel = {
+    development: "development",
+    edge: "edge",
+    preview: "preview",
+    production: "production"
+}[variant] || "preview";
 
 function git(args) {
     try {
@@ -196,15 +212,19 @@ export default {
         ],
         updates: {
             url: "https://u.expo.dev/4d6417af-448e-4a7b-a36e-b05ce12251a2",
-            // NO hardcoded expo-channel-name: this header is what the BUILT app
-            // sends when polling for OTAs, and it OVERRIDES the eas.json build
-            // profile's channel — a preview build shipped polling "production"
-            // while updates were published to "preview", so OTAs never arrived
-            // (2026-07-05; unblocked server-side by pointing channel production
-            // at branch preview). Leaving it unset lets EAS inject the build
-            // profile's channel, so each build polls its own channel.
+            // This header is what the BUILT app sends when polling for OTAs, and
+            // it OVERRIDES the eas.json build profile's channel — a preview build
+            // shipped polling "production" while updates were published to
+            // "preview", so OTAs never arrived (2026-07-05; unblocked
+            // server-side by pointing channel production at branch preview).
+            //
+            // It used to collapse every non-production variant to "preview",
+            // which made a per-variant channel impossible: an edge build would
+            // have polled preview no matter what its profile said. It now
+            // follows the variant (see updateChannel above), so each build polls
+            // its own channel and nothing has to be repointed server-side.
             requestHeaders: {
-                "expo-channel-name": process.env.APP_ENV === "production" ? "production" : "preview"
+                "expo-channel-name": updateChannel
             }
         },
         experiments: {

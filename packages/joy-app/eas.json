@@ -42,6 +42,15 @@
         "SHARP_IGNORE_GLOBAL_LIBVIPS": "1"
       }
     },
+    "edge": {
+      "autoIncrement": true,
+      "distribution": "internal",
+      "channel": "edge",
+      "env": {
+        "APP_ENV": "edge",
+        "SHARP_IGNORE_GLOBAL_LIBVIPS": "1"
+      }
+    },
     "production": {
       "autoIncrement": true,
       "channel": "production",

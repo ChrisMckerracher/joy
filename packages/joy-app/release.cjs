@@ -30,6 +30,12 @@ const actions = [
     scripts: ["release:build:developer"],
   },
   {
+    id: "edge-build",
+    label: "Edge build",
+    description: "Run edge builds for iOS and Android (the edge OTA channel)",
+    scripts: ["release:build:edge"],
+  },
+  {
     id: "appstore-build",
     label: "App Store build",
     description: "Run production store builds and auto-submit",
@@ -40,6 +46,12 @@ const actions = [
     label: "OTA (preview)",
     description: "Publish an update to the preview channel",
     scripts: ["release:ota:preview"],
+  },
+  {
+    id: "ota-edge",
+    label: "OTA (edge)",
+    description: "Publish an update to the edge channel (mobile only)",
+    scripts: ["release:ota:edge"],
   },
   {
     id: "ota-release",
@@ -63,6 +75,10 @@ const actionAliases = {
   "ota-preview": "ota-preview",
   "ota:preview": "ota-preview",
   preview: "ota-preview",
+  edge: "ota-edge",
+  "edge-build": "edge-build",
+  "ota-edge": "ota-edge",
+  "ota:edge": "ota-edge",
   "ota-release": "ota-release",
   "ota:release": "ota-release",
   production: "ota-release",
