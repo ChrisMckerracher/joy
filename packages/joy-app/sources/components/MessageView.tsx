@@ -1,7 +1,8 @@
 import * as React from "react";
-import { View, Text, Pressable, Platform } from "react-native";
+import { View, Text, Pressable, Platform, type StyleProp, type TextStyle } from "react-native";
 import { StyleSheet } from 'react-native-unistyles';
 import { MarkdownView } from "./markdown/MarkdownView";
+import { highlightSpans } from "./markdown/highlightSpans";
 import { t } from '@/text';
 import { Message, UserTextMessage, AgentTextMessage, ToolCallMessage } from "@/sync/typesMessage";
 import { Metadata } from "@/sync/storageTypes";
@@ -136,7 +137,6 @@ function UserTextBlock(props: {
   sessionId: string;
   highlight?: string;
 }) {
-  const handleOptionPress = useOptionPress(props.sessionId); // failures are surfaced + retained (#231)
 
   // Chat font size setting: scale the 16/24 bubble text metrics. null at 100%
   // so the static unistyles objects pass through untouched.
@@ -253,7 +253,7 @@ function UserTextBlock(props: {
                 <Text style={styles.slashCommandToken}>{slashMatch[1]}</Text>
                 {slashMatch[2]}
               </Text>
-            : <MarkdownView markdown={bodyText} onOptionPress={handleOptionPress} sessionId={props.sessionId} highlight={props.highlight} />}
+            : <PlainMessageText text={bodyText} highlight={props.highlight} style={scaledBubbleText} />}
       </View>}
     </View>
   );
@@ -557,6 +557,34 @@ function ToolCallBlock(props: {
   );
 }
 
+// Your own messages render VERBATIM — no markdown. Text you paste keeps its
+// spacing in the composer and should keep it in the bubble, but the block
+// parser gave every line its own paragraph with an 8px margin either side, so
+// pasted SQL or a log became one paragraph per line with a gap between each
+// (2026-09-17). A <Text> preserves runs of spaces and renders "\n" as a line
+// break, which is the whole requirement.
+//
+// Search marking is KEPT: one span through the existing highlighter, which
+// splits on the query alone and carries no markdown meaning. Losing it would
+// make search silently stop marking hits inside your own messages (#639).
+//
+// Bare URLs are deliberately NOT linked here. Autolinking is parsing, and not
+// parsing is the point — agent text still renders as markdown.
+function PlainMessageText(props: { text: string; highlight?: string; style?: StyleProp<TextStyle> }) {
+  const { theme } = useUnistyles();
+  const spans = React.useMemo(
+    () => highlightSpans([{ styles: [], text: props.text, url: null }], props.highlight),
+    [props.text, props.highlight],
+  );
+  return (
+    <Text style={[styles.plainMessageText, props.style]} selectable>
+      {spans.map((span, i) => span.highlighted
+        ? <Text key={i} style={{ backgroundColor: theme.colors.searchHighlight, color: theme.colors.text }}>{span.text}</Text>
+        : span.text)}
+    </Text>
+  );
+}
+
 const styles = StyleSheet.create((theme) => ({
   thinkingRow: { paddingHorizontal: 16, paddingVertical: 4 },
   thinkingHeader: { flexDirection: 'row', alignItems: 'flex-start' },
@@ -628,6 +656,15 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: 8,
     color: theme.colors.text,
     fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
+  },
+  // Verbatim user text. Same metrics as the mono and slash paths, which match
+  // the markdown body, so a bubble is the same height however it is rendered.
+  plainMessageText: {
+    fontSize: 16,
+    lineHeight: 24,
+    marginTop: 8,
+    marginBottom: 8,
+    color: theme.colors.text,
   },
   // Slash-command bubbles: normal chat typography, command token bold.
   slashMessageText: {

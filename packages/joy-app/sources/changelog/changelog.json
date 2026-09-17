@@ -1,6 +1,21 @@
 {
   "entries": [
     {
+      "title": "Sep 17 (3) — Your own messages keep their formatting",
+      "summary": "",
+      "markdown": "- **What you paste now looks the way you pasted it.** Your own messages are no longer read as Markdown, so spacing, indentation and line breaks survive exactly as you typed them. Pasted SQL, a log or a block of code used to be split into a separate paragraph per line with a gap between every one, which made anything multi-line hard to read. Replies from an agent still render as Markdown.\n- **What this gives up.** A bare link in your own message is no longer tappable, because nothing in it is being parsed any more. Links in an agent's replies are unaffected, and search still marks matches inside your messages."
+    },
+    {
+      "title": "Sep 17 (2) — When the app and a machine disagree",
+      "summary": "",
+      "markdown": "- **The out-of-date warning now names the side that is actually behind.** It could only ever say to update the machine, because it only checked whether a machine's daemon was too old. A machine running something *newer* than the app understands is just as much a mismatch, and it is the more common one: a machine updates in one step, while the app waits on a store review or a published update. The pill above a session now tells you which one to update. Dismissing it still only silences that exact version, so it returns by itself when either side moves."
+    },
+    {
+      "title": "Sep 17 (1) — Scrolling up during a reply stays up",
+      "summary": "",
+      "markdown": "- **Scrolling back through a chat while an agent is typing no longer yanks you to the bottom.** A small scroll up was answered by a jump back down, and then again on the next batch of text, for as long as the reply continued. Following now pays attention to direction rather than distance alone: moving up leaves the live view, text arriving beneath you is not mistaken for you moving, and scrolling back down resumes following.\n- **On desktop, the wheel counts as your hand on the page.** A mouse wheel produces none of the touch signals a phone does, so the guard that pauses following while you are moving was never switched on there. That is why it was worst with a mouse."
+    },
+    {
       "title": "Sep 11 (12) — Resuming a conversation that is already open",
       "summary": "",
       "markdown": "- **Picking a past conversation that is already running now opens it.** Starting a session from the app and choosing a conversation another session already has open used to hang: the machine refused it, nothing told you, and the app waited two minutes before saying only that the session did not start. The refusal now names the session holding that conversation, and the app opens it instead of starting a second one. If the conversation is open on a machine this device cannot see, you get a clear message rather than a wait. Needs the updated daemon."
@@ -496,5 +511,5 @@
       "markdown": "- E2E encrypted sessions.\n- Voice assistant.\n- File manager with syntax highlighting.\n- Real-time sync across devices."
     }
   ],
-  "latestTitle": "Sep 11 (12) — Resuming a conversation that is already open"
+  "latestTitle": "Sep 17 (3) — Your own messages keep their formatting"
 }
