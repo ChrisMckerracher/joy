@@ -1,12 +1,17 @@
 {
   "name": "@fny/joy-browser",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "A browser extension that lets a joy session run JavaScript in your browser",
+  "description": "A browser extension (Chrome and Firefox) that ties a joy session to your browser",
   "type": "module",
   "license": "AGPL-3.0-or-later",
   "scripts": {
-    "test": "node --test \"test/*.test.mjs\""
+    "test": "node --test \"test/*.test.mjs\"",
+    "build": "node build.mjs",
+    "lint:firefox": "node build.mjs && npx --yes web-ext@8 lint --source-dir dist/firefox",
+    "sign:firefox": "node sign-firefox.mjs",
+    "smoke:chrome": "node test/chrome-smoke.mjs",
+    "smoke:firefox": "node test/firefox-smoke.mjs"
   },
   "engines": {
     "npm": ">=11.10.0"

@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Joy Browser",
-  "version": "0.1.0",
-  "description": "Lets a joy session run JavaScript in this browser. The agent emits <joy-browser-execute>; this runs it and answers as a <joy-message>.",
+  "version": "0.2.0",
+  "description": "Ties a joy session to this browser: chat with it from any page, and let its agent run scripts here. Talks only to your relay.",
   "minimum_chrome_version": "120",
   "permissions": ["storage", "debugger", "tabs", "alarms"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js", "type": "module" },
-  "action": { "default_title": "Joy Browser", "default_popup": "popup.html" }
+  "action": { "default_title": "Joy Browser", "default_popup": "popup.html" },
+  "content_scripts": [{ "matches": ["http://*/*", "https://*/*"], "js": ["content.js"], "run_at": "document_idle" }]
 }

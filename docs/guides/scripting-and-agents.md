@@ -140,7 +140,19 @@ return document.querySelector(".price").textContent;
 </joy-browser-execute>
 ```
 
-The body runs as an async function in the page, and `return` is the answer. With no attribute it runs in the active tab; `tab="123"` names a tab, `url="…"` opens one, and `tab="list"` reports the open tabs. The agent ends its turn after the tag, and the result arrives as its next message, marked `from="browser"`. Nothing runs unless a browser is attached. See [Your browser](browser.md).
+The body runs as an async function in the page, and `return` is the answer. With no attribute it runs in the active tab; `tab="123"` names a tab, `url="…"` opens one, and `tab="list"` reports the open tabs. The agent ends its turn after the tag, and the result arrives as its next message, marked `from="browser"`. Nothing runs unless a browser is attached. A script aimed at a site the user excluded, or sent while the user paused the browser, comes back as an error. See [Your browser](browser.md).
+
+### Saved browser script: `<joy-browser-remember>`
+
+Ask the attached browser to keep a script and run it on every later visit to the named sites.
+
+```text
+<joy-browser-remember name="Hide the sidebar" match="example.com, *.example.org/app/*">
+document.querySelector("#sidebar")?.remove();
+</joy-browser-remember>
+```
+
+`name` identifies the script, and the same name replaces the earlier version. `match` lists sites, separated by commas: a bare host covers its subdomains, and a path with `*` narrows it. The script is off until the user approves it in the browser, and the agent cannot approve it. The browser answers, as the next message, with whether the script was saved.
 
 ## One-shot runs
 

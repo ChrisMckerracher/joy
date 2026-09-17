@@ -70,7 +70,7 @@ describe('joy-browser end to end', () => {
 
     await watcher.poll();
     expect(ran).toHaveLength(1);
-    expect(ran[0]).toEqual({ attrs: { url: 'https://shop.test/pricing?a>b' }, code: 'return document.querySelector(".price").textContent;' });
+    expect(ran[0]).toMatchObject({ kind: 'execute', attrs: { url: 'https://shop.test/pricing?a>b' }, code: 'return document.querySelector(".price").textContent;' });
 
     // ── the answer is an ordinary queued prompt the daemon now claims ──
     const answerOffer = relay.offerFor(await d.claim('work'), sessionId);

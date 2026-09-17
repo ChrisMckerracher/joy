@@ -2,8 +2,8 @@
 //
 // This is the subset of packages/joy-mcp/src/crypto.mjs an extension needs to
 // be a client of ONE account: log in, open session keys and cards, open the
-// agent's output, seal a prompt. The machine plane (AES-GCM machine cards, the
-// tunnel) is deliberately absent — this client never talks to a daemon.
+// agent's output, seal a prompt, name the machines and seal a spawn spec for
+// one. The tunnel is deliberately absent — this client never talks to a daemon.
 //
 // node:crypto is gone: SHA-512 is nacl.hash, HMAC-SHA512 is built on it, and
 // randomness is nacl.randomBytes (crypto.getRandomValues underneath). Formats:
@@ -12,6 +12,10 @@
 //   login        ed25519 keypair from the 32-byte account secret
 //   envelope     "v2sk1:" + b64(epk32 ‖ nonce24 ‖ box(sessionKey))
 //   content      "v2e1:"  + b64(nonce24 ‖ secretbox(utf8(json)))
+//   machine key  b64(0x00 ‖ epk32 ‖ nonce24 ‖ box(key)), opened with the content key
+//   machine card 0x00 ‖ iv12 ‖ AES-256-GCM(ct ‖ tag16) under the machine key —
+//                the one format tweetnacl lacks; WebCrypto has it, so that one
+//                function is async
 import * as vendored from '../vendor/nacl-fast.min.js';
 
 /** The vendored build is UMD. As a real ES module — the service worker, or
@@ -164,4 +168,38 @@ export function openPayload(ciphertext, key) {
 export function openCard(encryptedMetadata, key) {
   const p = openV2Json(encryptedMetadata, key);
   return p && p.t === 'card' && p.metadata && typeof p.metadata === 'object' ? p.metadata : null;
+}
+
+// ── machines ─────────────────────────────────────────────────────────────────
+
+/** A machine's data key as the relay stores it: b64(0x00 ‖ box bundle). */
+export function openMachineKey(encrypted, contentSecret) {
+  if (typeof encrypted !== 'string' || !encrypted) return null;
+  try {
+    const bytes = unb64(encrypted);
+    if (bytes[0] !== 0) return null;
+    const key = openBox(bytes.subarray(1), contentSecret);
+    return key && key.length === 32 ? key : null;
+  } catch { return null; }
+}
+
+/** The machine's card (host, displayName, capabilities…), or null. */
+export async function openMachineMetadata(encrypted, machineKey) {
+  if (typeof encrypted !== 'string' || !encrypted || !machineKey) return null;
+  try {
+    const bytes = unb64(encrypted);
+    if (bytes[0] !== 0 || bytes.length < 1 + 12 + 16) return null;
+    const k = await crypto.subtle.importKey('raw', machineKey, 'AES-GCM', false, ['decrypt']);
+    // WebCrypto takes ciphertext ‖ tag as one buffer, which is how it is stored.
+    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes.subarray(1, 13) }, k, bytes.subarray(13));
+    return JSON.parse(fromUtf8(new Uint8Array(pt)));
+  } catch { return null; }
+}
+
+/** A spawn spec for one daemon: sealed under the machine's "Joy Spawn Spec"
+ *  leaf when it advertises that it opens those, the plain form every daemon
+ *  parses otherwise. */
+export function sealSpawnSpec(spec, machineKey, machineId) {
+  const key = machineKey ? deriveKey(machineKey, 'Joy Spawn Spec', [machineId]) : null;
+  return sealV2Json({ v: 1, t: 'spawn', ...spec }, key);
 }

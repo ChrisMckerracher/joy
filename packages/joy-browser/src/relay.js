@@ -53,6 +53,15 @@ export class RelayClient {
   listSessions() { return this.call('GET', '/sessions'); }
   sessionState(id) { return this.call('GET', `/sessions/${encodeURIComponent(id)}`); }
   events(id, after, limit = 200) { return this.call('GET', `/sessions/${encodeURIComponent(id)}/events?after=${after}&limit=${limit}`); }
+  /** The page of events ending just before `before` — history, newest last. */
+  eventsBefore(id, before, limit = 80) { return this.call('GET', `/sessions/${encodeURIComponent(id)}/events?before=${before}&limit=${limit}`); }
+  listMachines() { return this.call('GET', '/machines'); }
+  /** Ask a machine's daemon to start a session: the spawn spec rides sealed (or plain) to it. */
+  createSession(machineId, spawnSpecWire) {
+    return this.call('POST', '/sessions', { mode: 'spawn', daemonId: machineId, creationIntentId: crypto.randomUUID(), spawnSpec: spawnSpecWire });
+  }
+  /** Re-queue a spawn that failed for a missing folder, opting into creating it. */
+  retrySpawn(id) { return this.call('POST', `/sessions/${encodeURIComponent(id)}/spawn/retry`, { createDir: true }); }
   /** The durable queue: a sealed prompt in, { messageId, turnId, seq } out. */
   sendCiphertext(sessionId, ciphertext) {
     return this.call('POST', `/sessions/${encodeURIComponent(sessionId)}/messages`, { ciphertext, clientIntentId: crypto.randomUUID() });

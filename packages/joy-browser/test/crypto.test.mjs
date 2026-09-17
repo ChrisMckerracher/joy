@@ -62,3 +62,23 @@ test('prompts, records and cards cross between the two clients', () => {
   // a plaintext session (no key): stored as sent
   assert.deepEqual(B.openPayload(B.sealText('plain', null), null), { t: 'plain', text: 'plain' });
 });
+
+test('a machine key and its card open; the card is AES-GCM through WebCrypto', async () => {
+  const machineKey = new Uint8Array(randomBytes(32));
+  const sealedKey = N.sealMachineKey(machineKey, N.contentKeyPair(secret).publicKey);
+  eq(B.openMachineKey(sealedKey, B.contentKeyPair(secret).secretKey), machineKey);
+  const card = { host: 'metal', displayName: 'Metal', capabilities: { spawnSpecSealed: true } };
+  assert.deepEqual(await B.openMachineMetadata(N.sealMachineMetadata(card, machineKey), machineKey), card);
+  assert.equal(await B.openMachineMetadata(N.sealMachineMetadata(card, machineKey), new Uint8Array(32)), null);
+  assert.equal(await B.openMachineMetadata('', machineKey), null);
+});
+
+test('a spawn spec is sealed for one machine, or plain when the daemon wants that', () => {
+  const machineKey = new Uint8Array(randomBytes(32));
+  const spec = { cwd: '~/joy-browser', agent: 'claude', headless: true, createDir: true };
+  const sealed = B.sealSpawnSpec(spec, machineKey, 'machine-1');
+  assert.match(sealed, /^v2e1:/);
+  assert.deepEqual(N.openV2Json(sealed, N.deriveKey(machineKey, 'Joy Spawn Spec', ['machine-1'])), { v: 1, t: 'spawn', ...spec });
+  assert.equal(N.openV2Json(sealed, N.deriveKey(machineKey, 'Joy Spawn Spec', ['machine-2'])), null, 'another machine cannot open it');
+  assert.deepEqual(JSON.parse(B.sealSpawnSpec(spec, null, 'machine-1')), { v: 1, t: 'spawn', ...spec });
+});

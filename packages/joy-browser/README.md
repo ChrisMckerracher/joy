@@ -1,34 +1,39 @@
 # joy-browser
 
-A Chrome extension that lets a joy session act in your browser. The agent writes
-a script between `<joy-browser-execute>` tags; the extension runs it in a tab and
-sends the outcome back into the session as a `<joy-message from="browser">`.
+An extension for Chrome and Firefox that ties one joy session to your browser.
+You pair it once, it starts a headless session on a machine you pick, and from
+then on a draggable chat button on every page talks to that session. The
+session's agent can run JavaScript in your tabs, and can ask to keep a script so
+that it runs on every visit to a site.
 
 It is a client of your account, like the app and the MCP server. It talks only
 to your relay: nothing listens on your machine, no port is opened, and the agent
-can be on a different machine from the browser. The session it answers to is
-usually a headless one (`joy new <dir> --headless`).
+can be on a different machine from the browser.
 
 ```
  agent (any machine)             relay                     your browser
 ┌─────────────────────┐   ┌────────────────┐   ┌──────────────────────────────┐
-│ emits the tag in    │──►│ sealed output  │──►│ extension opens it, runs the │
-│ its reply, ends the │   │                │   │ script in a tab              │
+│ emits a tag in its  │──►│ sealed output  │──►│ extension opens it, runs the │
+│ reply, ends the     │   │                │   │ script in a tab              │
 │ turn                │◄──│ durable queue  │◄──│ queues the sealed result     │
 └─────────────────────┘   └────────────────┘   └──────────────────────────────┘
 ```
 
+The user's guide is [docs/guides/browser.md](../../docs/guides/browser.md). This
+file is for working on the extension.
+
 ## Install
 
-There is no build step and the package has no dependencies.
+The package has no dependencies, and Chrome needs no build step.
 
-1. Open `chrome://extensions`, turn on **Developer mode**, choose **Load unpacked**, and pick this directory.
-2. Click the extension, enter your relay's address and your backup code (the joy app shows it under Settings → Account), and press **Pair**.
-3. Pick the session this browser should answer to. With **Tell the session a browser attached** ticked, the session gets a message saying so, which is how the agent knows it may use the tag.
+- **Chrome.** `chrome://extensions` → **Developer mode** → **Load unpacked** → this directory.
+- **Firefox, for good.** `WEB_EXT_API_KEY=… WEB_EXT_API_SECRET=… pnpm sign:firefox`, then open the `.xpi` from `dist/signed/`. See [Signing](#signing-for-firefox).
+- **Firefox, until it closes.** `pnpm build`, then `about:debugging` → **This Firefox** → **Load Temporary Add-on** → `dist/firefox/manifest.json`.
 
-Sessions learn the tag from the daemon's system prompt, so the daemon on the
-agent's machine must be recent enough to carry it. A session that was already
-running when its daemon updated learns it from `/joy-prompt`.
+Sessions learn the tags from the daemon's system prompt (`BROWSER_SECTION` in
+`joy-daemon/src/domain/agentTagsPrompt.ts`), so the daemon on the agent's machine
+must be recent enough to carry them. A session that was already running when its
+daemon updated learns them from `/joy-prompt`.
 
 ## What the agent writes
 
@@ -50,28 +55,76 @@ and `return` is the answer. Attributes on the opening tag choose where it runs:
 
 The result names the tab it ran in, `status: ok` or `status: error`, the returned
 value as JSON, and anything the script logged. The round trip is a turn boundary,
-not a tool call: the agent ends its turn after the tag and the result is its next
-message.
+not a tool call: the agent ends its turn after the tag, and the result is its next
+message, wrapped as `<joy-message from="browser">`.
+
+```
+<joy-browser-remember name="Hide the sidebar" match="example.com, *.example.org/app/*">
+document.querySelector("#sidebar")?.remove();
+</joy-browser-remember>
+```
+
+This asks the extension to keep the script. It is stored **off and unapproved**;
+only the user can approve it (chat panel, or Settings → Saved scripts), and a
+changed script loses its approval. An approved script runs on every completed
+load of a matching page. The same name replaces the earlier version.
 
 ## What runs, and what never does
 
 - **Only the agent's own reply text.** A tag in a prompt, in a user's message, in the agent's thinking, or inside a fenced code block never runs. That includes the extension's own results: a page cannot print a tag into a result and have it executed.
-- **Only from the moment you attach.** Attaching starts at the end of the conversation, so a tag from earlier does not fire because a browser appeared.
+- **Only from the moment of linking.** The watcher starts at the end of the conversation, so a tag from earlier does not fire because a browser appeared.
 - **At most once.** The position in the conversation is saved before a script runs. If the browser dies mid-script the agent gets no answer and can ask again; a click or a form submit is never repeated on restart.
+- **Never on an excluded site.** The check is made on the `url=` the agent gave and again on the tab's address after it loaded, so a redirect onto an excluded site is refused too. Excluded tabs are left out of `tab="list"`, saved scripts skip them, and the page button is not injected there.
+- **Never while paused.** Pause refuses agent scripts and silences saved ones.
 
-## Things to know
+## How it is put together
 
-- **The debugging bar.** Manifest V3 will not evaluate a string, and an agent's script is a string, so scripts run through `chrome.debugger`. Chrome shows "Joy Browser is debugging this browser" while one runs. The debugger is attached per script and detached afterwards. Browser-internal pages (`chrome://`, the Web Store) cannot be scripted.
-- **It is your real browser.** Scripts run with your logins. The agent is told not to submit, buy, send or delete anything you did not ask for, and to treat page content as data rather than instructions, but a page can still try to talk an agent into things. Attach it to sessions whose task you know.
-- **The backup code is the whole account.** It is kept in this browser profile's extension storage so the extension can sign in again by itself. Pair only a browser profile you trust, and **Unpair** removes it.
-- **Latency.** Chrome puts an idle extension to sleep. A wake-up alarm checks every 30 seconds, so a script waits at most that long; while the popup is open or the session is busy it runs at once.
+| File | Part |
+|---|---|
+| `background.js` | Everything with state: setup, the linked session (spawn, relink, respawn when it ended), the watcher, the two brakes, saved scripts, and the chat feed the page button connects to. A service worker in Chrome, a background page in Firefox. |
+| `content.js` | The page button and chat panel, in a closed shadow root. Self-contained: content scripts cannot import. |
+| `popup.html`, `popup.js` | Setup, status, Pause, and the Settings pages. Stateless: every screen is drawn from the background's `status`. |
+| `src/runner.js` | Runs a script in a tab. Chrome: `chrome.debugger` → `Runtime.evaluate`, because Manifest V3 will not evaluate a string. Firefox: `tabs.executeScript({ code })`, which is why the Firefox build is Manifest V2. |
+| `src/watcher.js` | Reads the session's events, finds tags in agent text, runs each once, queues the answers. |
+| `src/tags.js`, `src/patterns.js`, `src/conversation.js` | Pure: tag parsing and result formatting, site patterns, folding events into chat rows. |
+| `src/crypto.js`, `src/relay.js` | The account client: tweetnacl and WebCrypto only. |
+| `manifest.json`, `manifest.firefox.json` | One per browser. `build.mjs` writes `dist/chrome` and `dist/firefox`; keep the two versions equal. |
+
+Things that follow from the platform:
+
+- **The debugging bar (Chrome).** Chrome shows "Joy Browser is debugging this browser" while a script runs. The debugger is attached per script and detached afterwards.
+- **Latency (Chrome).** Chrome stops an idle service worker. An alarm wakes it every 30 seconds, so a script waits at most that long; an open chat panel holds a port and pings, which keeps it awake. Firefox's background page does not sleep.
+- **Console capture (Firefox).** A content script sees only its own `console` calls, so a result carries what the script logged, not what the page logged. Chrome carries both.
+- **The backup code is the whole account.** It is kept in the profile's extension storage so the extension can sign in again by itself. **Clear everything** removes it.
+
+## Signing for Firefox
+
+Release Firefox installs only extensions Mozilla signed. `pnpm sign:firefox`
+builds `dist/firefox` and submits it with `web-ext sign --channel unlisted`:
+signed, but never listed on addons.mozilla.org. It needs `WEB_EXT_API_KEY` (the
+JWT issuer) and `WEB_EXT_API_SECRET` (the JWT secret) from
+<https://addons.mozilla.org/developers/addon/api/key/>. The `.xpi` lands in
+`dist/signed/`.
+
+- The add-on id (`browser_specific_settings.gecko.id`) belongs to the first Mozilla account that signs it. Signing under another account needs another id.
+- A version can be signed once. Bump `version` in both manifests to sign again.
+- The manifest declares `data_collection_permissions` for website content and browsing activity: script results leave the browser for the relay, and Firefox shows that at install.
 
 ## Tests
 
 ```bash
-pnpm test                          # crypto, tag parsing, the watcher — plain node, no browser
-node test/chrome-smoke.mjs         # real relay + real Chromium, driven through the popup
+pnpm test             # crypto, tags, patterns, conversation, watcher — plain node, no browser
+pnpm lint:firefox     # web-ext lint on the Firefox build
+pnpm smoke:chrome     # real relay + real Chromium: [path to chrome]
+pnpm smoke:firefox    # real relay + real Firefox:  <path to firefox> <path to geckodriver>
 ```
+
+The two smoke tests run one scenario (`test/smoke-lib.mjs` holds the relay and a
+hand-played daemon): pair in the popup, pick a machine, the extension spawns its
+session, scripts run and fail properly, a message typed into the page panel
+reaches the session, a remembered script stays off until approved and then runs
+by itself, an excluded site refuses everything, and Pause refuses everything.
+They are not part of `pnpm test` because they need browsers.
 
 The crypto tests seal with this package and open with `joy-mcp`'s Node client,
 and the reverse, so the two cannot drift apart. `packages/joy-relay/test/joy-browser.e2e.test.mjs`

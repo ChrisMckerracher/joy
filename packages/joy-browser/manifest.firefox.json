@@ -1,0 +1,44 @@
+{
+  "manifest_version": 2,
+  "name": "Joy Browser",
+  "version": "0.2.0",
+  "description": "Ties a joy session to this browser: chat with it from any page, and let its agent run scripts here. Talks only to your relay.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "joy-browser@faraz.vip",
+      "strict_min_version": "115.0",
+      "data_collection_permissions": {
+        "required": [
+          "websiteContent",
+          "browsingActivity"
+        ]
+      }
+    }
+  },
+  "permissions": [
+    "storage",
+    "tabs",
+    "alarms",
+    "<all_urls>"
+  ],
+  "background": {
+    "page": "background.html",
+    "persistent": true
+  },
+  "browser_action": {
+    "default_title": "Joy Browser",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

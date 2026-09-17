@@ -16,7 +16,7 @@
 //     can die at any moment; re-running a script (a click, a form submit) on
 //     restart is worse than the agent having to ask again.
 import { openPayload, sealText } from './crypto.js';
-import { extractExecuteTags, describeResult, browserMessage } from './tags.js';
+import { extractBrowserTags, describeResult, browserMessage } from './tags.js';
 
 /** The agent's visible text in one relay event, or null. */
 export function agentTextOf(event, key) {
@@ -28,9 +28,12 @@ export function agentTextOf(event, key) {
 }
 
 export class Watcher {
-  /** @param {{ relay: any, store: { load(): Promise<any>, saveCursor(n: number): Promise<void> }, execute: (tag: any) => Promise<any>, log?: (line: string) => void }} deps */
-  constructor({ relay, store, execute, log = () => {} }) {
-    this.relay = relay; this.store = store; this.execute = execute; this.log = log;
+  /** `execute(tag)` runs a script now; `remember(tag)` saves one for later and
+   *  answers with `{ note }`; `onEvents(events, key)` sees every new event, in
+   *  order, BEFORE anything in it runs — the chat shows the agent's words at
+   *  once and the outcome when it lands. */
+  constructor({ relay, store, execute, remember = null, onEvents = null, log = () => {} }) {
+    this.relay = relay; this.store = store; this.execute = execute; this.remember = remember; this.onEvents = onEvents; this.log = log;
     this.running = null; this.again = false;
   }
 
@@ -54,18 +57,25 @@ export class Watcher {
       const page = await this.relay.events(sessionId, cursor, 200);
       const events = page?.messages ?? [];
       if (!events.length) return;
+      try { this.onEvents?.(events.filter((e) => Number(e.seq) > cursor), key); } catch { /* a view must never stop the work */ }
       for (const e of events) {
         const seq = Number(e.seq);
         if (!(seq > cursor)) continue;
         cursor = seq;
         await this.store.saveCursor(cursor); // rule 3: before anything runs
-        const tags = extractExecuteTags(agentTextOf(e, key) ?? '');
+        const tags = extractBrowserTags(agentTextOf(e, key) ?? '');
         if (!tags.length) continue;
         const results = [];
         for (const tag of tags) {
-          this.log(`running ${tag.attrs.url ? `on ${tag.attrs.url}` : tag.attrs.tab ? `in tab ${tag.attrs.tab}` : 'in the active tab'} (${tag.code.length} chars)`);
-          try { results.push(await this.execute(tag)); }
-          catch (err) { results.push({ tab: null, error: err?.message ?? String(err) }); }
+          try {
+            if (tag.kind === 'remember') {
+              this.log(`asked to remember "${tag.attrs.name ?? 'untitled script'}"`);
+              results.push(this.remember ? await this.remember(tag) : { note: 'this browser cannot save scripts' });
+            } else {
+              this.log(`running ${tag.attrs.url ? `on ${tag.attrs.url}` : tag.attrs.tab ? `in tab ${tag.attrs.tab}` : 'in the active tab'} (${tag.code.length} chars)`);
+              results.push(await this.execute(tag));
+            }
+          } catch (err) { results.push({ tab: null, error: err?.message ?? String(err) }); }
         }
         const body = results.map((r, i) => describeResult(r, i, results.length)).join('\n\n');
         await this.relay.sendCiphertext(sessionId, sealText(browserMessage(body), key));

@@ -103,3 +103,35 @@ test('agentTextOf refuses what it cannot open', () => {
   assert.equal(agentTextOf({ seq: 1, kind: 'output', content: { ciphertext: sealText('x', key) } }, new Uint8Array(32)), null);
   assert.equal(agentTextOf({ seq: 1 }, key), null);
 });
+
+test('a remember tag is saved, not run, and answered in order with what did run', async () => {
+  const remembered = [];
+  const events = [agentText(1, `<joy-browser-remember name="Tidy" match="a.test">\ndocument.title = "x";\n</joy-browser-remember>\n${TAG('return 1')}`)];
+  const sent = []; const ran = [];
+  const state = { sessionId: 's1', key, cursor: 0 };
+  const w = new Watcher({
+    relay: { events: async (_i, after) => ({ messages: events.filter((e) => e.seq > after) }), sendCiphertext: async (_i, ct) => { sent.push(openPayload(ct, key).text); } },
+    store: { load: async () => ({ ...state }), saveCursor: async (n) => { state.cursor = n; } },
+    execute: async (tag) => { ran.push(tag.code); return { tab: null, value: '1' }; },
+    remember: async (tag) => { remembered.push(tag.attrs.name); return { note: `saved "${tag.attrs.name}" — waiting for the user to approve it` }; },
+  });
+  await w.poll();
+  assert.deepEqual(remembered, ['Tidy']);
+  assert.deepEqual(ran, ['return 1'], 'the remembered script itself never ran');
+  assert.match(sent[0], /\[result 1 of 2\] saved "Tidy" — waiting for the user to approve it\n\n\[result 2 of 2\] no tab\nstatus: ok/);
+});
+
+test('the chat sees new events before anything in them runs, and only once', async () => {
+  const seen = []; const order = [];
+  const events = [agentText(1, TAG('return 1')), agentText(2, 'plain words')];
+  const state = { sessionId: 's1', key, cursor: 0 };
+  const w = new Watcher({
+    relay: { events: async (_i, after) => ({ messages: events.filter((e) => e.seq > after) }), sendCiphertext: async () => {} },
+    store: { load: async () => ({ ...state }), saveCursor: async (n) => { state.cursor = n; } },
+    execute: async () => { order.push('ran'); return { tab: null, value: '1' }; },
+    onEvents: (evs) => { order.push('seen'); seen.push(...evs.map((e) => e.seq)); },
+  });
+  await w.poll(); await w.poll();
+  assert.deepEqual(seen, [1, 2]);
+  assert.deepEqual(order.slice(0, 2), ['seen', 'ran']);
+});

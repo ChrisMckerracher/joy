@@ -1,77 +1,122 @@
-// The popup: pair, pick the session this browser answers to, watch it work.
+// The popup: two-step setup, then status, the pause switch and Settings.
+// It holds no state of its own — every screen is drawn from the background's
+// `status`, so it is always true to what is stored.
+const api = globalThis.browser ?? globalThis.chrome;
 const app = document.getElementById('app');
-const ask = (type, extra = {}) => chrome.runtime.sendMessage({ type, ...extra });
-const el = (tag, props = {}, ...kids) => {
-  const n = Object.assign(document.createElement(tag), props);
-  for (const k of kids) n.append(k);
-  return n;
-};
+const ask = async (type, extra = {}) => { const r = await api.runtime.sendMessage({ type, ...extra }); if (r?.error) throw new Error(r.error); return r; };
+const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); for (const k of kids) if (k != null) n.append(k); return n; };
 
-async function render(error) {
+let page = 'main'; // main | session | excluded | scripts
+let flash = null;  // { bad, text } shown once at the top
+
+async function render() {
   const st = await ask('status');
   app.replaceChildren();
-  if (error) app.append(el('p', { className: 'err', textContent: error }));
-  if (!st.paired) return renderPair();
-  if (st.attached) return renderAttached(st);
-  return renderSessions(st);
+  if (flash) { app.append(el('p', { className: flash.bad ? 'err' : 'ok', textContent: flash.text })); flash = null; }
+  if (st.stage === 'pair') return renderPair();
+  if (st.stage === 'machine') return renderMachine(st);
+  return ({ main: renderMain, session: renderSession, excluded: renderExcluded, scripts: renderScripts })[page](st);
 }
+const go = (p) => { page = p; render(); };
+const fail = (e) => { flash = { bad: true, text: e.message }; render(); };
+const busy = (btn, label) => { btn.disabled = true; btn.textContent = label; };
+const header = (title, back) => el('div', { className: 'row' }, el('h1', { textContent: title }), back ? Object.assign(el('button', { className: 'quiet', textContent: '‹ Back' }), { onclick: () => go('main') }) : null);
 
+// ── setup ────────────────────────────────────────────────────────────────────
 function renderPair() {
-  const relay = el('input', { type: 'text', placeholder: 'relay.example.com:4997' });
-  const code = el('input', { type: 'password', placeholder: 'XXXXX-XXXXX-…' });
-  const go = el('button', { textContent: 'Pair' });
-  go.onclick = async () => {
-    go.disabled = true; go.textContent = 'Pairing…';
-    const r = await ask('pair', { relayUrl: relay.value, backupCode: code.value });
-    render(r?.error ? `Could not pair: ${r.error}` : undefined);
+  const relay = el('input', { type: 'text', placeholder: 'relay.example.com:4997', autocomplete: 'off' });
+  const code = el('input', { type: 'password', placeholder: 'XXXXX-XXXXX-…', autocomplete: 'off' });
+  const next = el('button', { textContent: 'Continue' });
+  next.onclick = async () => { busy(next, 'Checking…'); try { await ask('login', { relayUrl: relay.value, backupCode: code.value }); render(); } catch (e) { fail(new Error(`Could not pair: ${e.message}`)); } };
+  app.append(el('h1', { textContent: 'Pair this browser' }),
+    el('p', { textContent: 'Your backup code is in the joy app under Settings → Account. It is the whole account and is kept in this browser profile until you clear it: pair only a profile you trust.' }),
+    el('label', {}, 'Relay', relay), el('label', {}, 'Backup code', code), next);
+}
+
+async function renderMachine(st) {
+  app.append(el('h1', { textContent: 'Where should your session run?' }), el('p', { textContent: `Paired with ${st.relayUrl}. A headless session starts on the machine you pick and stays linked to this browser.` }));
+  const select = el('select'); const folder = el('input', { type: 'text', value: st.defaultFolder });
+  const start = el('button', { textContent: 'Start my session' });
+  app.append(el('label', {}, 'Machine', select), el('label', {}, 'Folder on that machine (created if missing)', folder), start, clearButton('Start over'));
+  let machines = [];
+  try { machines = (await ask('machines')).machines; } catch (e) { return fail(e); }
+  if (!machines.length) { select.replaceWith(el('p', { className: 'err', textContent: 'This account has no machines yet. Install the joy daemon on one and pair it, then come back.' })); start.disabled = true; return; }
+  for (const m of machines) select.append(el('option', { value: m.id, textContent: `${m.name}${m.online ? '' : ' (offline)'}`, disabled: !m.online }));
+  const firstOnline = machines.find((m) => m.online); if (firstOnline) select.value = firstOnline.id; else start.disabled = true;
+  start.onclick = async () => {
+    busy(start, 'Starting… this can take a minute');
+    const m = machines.find((x) => x.id === select.value);
+    try { await ask('start', { machineId: m.id, machineName: m.name, cwd: folder.value }); flash = { text: 'Your session is running. Use the round J button on any page to talk to it.' }; render(); } catch (e) { fail(e); }
   };
-  app.append(
-    el('h1', { textContent: 'Pair this browser' }),
-    el('p', { textContent: 'Your backup code is in the joy app under Settings → Account. It is kept in this browser profile and is the whole account: pair only a browser you trust.' }),
-    el('label', {}, 'Relay', relay), el('label', {}, 'Backup code', code), go,
-  );
 }
 
-async function renderSessions(st) {
-  app.append(el('div', { className: 'row' }, el('h1', { textContent: 'Attach to a session' }), unpairButton()));
-  app.append(el('p', { textContent: `Scripts the chosen session emits will run in this browser. ${st.relayUrl}` }));
-  const announce = el('input', { type: 'checkbox', checked: true });
-  app.append(el('label', { className: 'check' }, announce, 'Tell the session a browser attached'));
-  const list = el('ul'); app.append(list);
-  list.append(el('p', { textContent: 'Loading sessions…' }));
-  const r = await ask('sessions');
-  list.replaceChildren();
-  if (r?.error) return list.append(el('p', { className: 'err', textContent: r.error }));
-  if (!r.sessions.length) return list.append(el('p', { textContent: 'No sessions. Start one with: joy new <dir> --headless' }));
-  for (const s of r.sessions) {
-    const title = el('div', { className: 't', textContent: s.title ?? s.cwd?.split('/').pop() ?? s.localId });
-    if (s.headless) title.append(el('span', { className: 'tag', textContent: 'headless' }));
-    if (!s.readable) title.append(el('span', { className: 'tag', textContent: 'unreadable' }));
-    const li = el('li', { className: s.online ? '' : 'off' }, title,
-      el('div', { className: 's', textContent: `${s.localId} · ${s.harness} · ${s.host ?? '?'} · ${s.online ? 'online' : 'offline'}` }),
-      el('div', { className: 's', textContent: s.cwd ?? '' }));
-    li.onclick = async () => { const a = await ask('attach', { session: s, announce: announce.checked }); render(a?.error); };
-    list.append(li);
+// ── after setup ──────────────────────────────────────────────────────────────
+function renderMain(st) {
+  const s = st.linked;
+  const pause = el('button', { className: st.paused ? '' : 'quiet', textContent: st.paused ? 'Resume' : 'Pause' });
+  pause.onclick = async () => { await ask('pause', { paused: !st.paused }); render(); };
+  app.append(el('div', { className: 'row' }, el('h1', { textContent: 'Joy Browser' }), pause));
+  if (st.starting) app.append(el('p', { textContent: 'Starting your session…' }));
+  else if (s) app.append(el('div', { className: 'card' }, el('div', { className: `t ${st.paused ? '' : 'ok'}`, textContent: s.title ?? `session ${s.localId}` }), el('div', { className: 's', textContent: `${s.localId} · ${st.machineName ?? '?'} · ${st.cwd ?? ''}` })));
+  else {
+    const again = el('button', { textContent: 'Start a session' });
+    again.onclick = async () => { busy(again, 'Starting…'); try { await ask('newSession'); render(); } catch (e) { fail(e); } };
+    app.append(el('p', { className: 'err', textContent: st.linkError ?? 'No session is linked.' }), again);
   }
+  if (st.paused) app.append(el('p', { textContent: 'Paused: the agent cannot run anything in this browser, and saved scripts do not run.' }));
+  const pending = st.scripts.filter((x) => !x.approved).length;
+  const nav = (label, target, note) => { const b = el('button', { className: 'nav' }, el('span', { textContent: label }), el('span', { className: 's', textContent: note })); b.onclick = () => go(target); return b; };
+  app.append(el('div', { className: 'navs' },
+    nav('Session', 'session', s ? s.localId : 'none'),
+    nav('Excluded sites', 'excluded', st.excluded.length ? `${st.excluded.length}` : 'none'),
+    nav('Saved scripts', 'scripts', pending ? `${pending} waiting for you` : st.scripts.length ? `${st.scripts.filter((x) => x.enabled).length} on` : 'none')),
+    el('pre', { textContent: st.log.slice(-8).join('\n') || 'Nothing has happened yet.' }), clearButton('Clear everything'));
 }
 
-function renderAttached(st) {
-  const a = st.attached;
-  const detach = el('button', { className: 'quiet', textContent: 'Detach' });
-  detach.onclick = async () => { await ask('detach'); render(); };
-  app.append(
-    el('div', { className: 'row' }, el('h1', { textContent: 'Attached' }), detach),
-    el('div', {}, el('div', { className: 't ok', textContent: a.title ?? a.localId }), el('div', { className: 's', textContent: `${a.localId} · ${st.relayUrl}` })),
-    el('p', { textContent: 'While a script runs, Chrome shows a bar saying this extension is debugging the browser. That is how an agent-written script is allowed to run at all.' }),
-    el('pre', { textContent: st.log.slice(-14).join('\n') || 'Waiting for the session to emit <joy-browser-execute>…' }),
-  );
+function renderSession(st) {
+  const ref = el('input', { type: 'text', placeholder: 'session id, e.g. 1a2b3c4d', autocomplete: 'off' });
+  const connect = el('button', { textContent: 'Connect' });
+  connect.onclick = async () => { busy(connect, 'Connecting…'); try { await ask('connect', { ref: ref.value }); flash = { text: 'Connected.' }; go('main'); } catch (e) { fail(e); } };
+  const fresh = el('button', { className: 'quiet', textContent: `Start a fresh session on ${st.machineName ?? 'the machine'}` });
+  fresh.onclick = async () => { busy(fresh, 'Starting…'); try { await ask('newSession'); go('main'); } catch (e) { fail(e); } };
+  app.append(header('Session', true),
+    el('p', { textContent: st.linked ? `This browser is linked to ${st.linked.localId}${st.linked.title ? ` — ${st.linked.title}` : ''}. It stays linked until you change it here or clear everything.` : 'No session is linked.' }),
+    el('label', {}, 'Connect to a specific session instead', ref), connect,
+    el('p', { textContent: 'Use the id the app and `joy ls` show. The session is told a browser attached; only what its agent says from then on can run here.' }), fresh);
 }
 
-function unpairButton() {
-  const b = el('button', { className: 'quiet', textContent: 'Unpair' });
-  b.onclick = async () => { await ask('unpair'); render(); };
+function renderExcluded(st) {
+  const input = el('input', { type: 'text', placeholder: 'bank.com   or   example.com/account/*', autocomplete: 'off' });
+  const add = el('button', { textContent: 'Add' });
+  const submit = async () => { try { await ask('exclude:add', { pattern: input.value }); render(); } catch (e) { fail(e); } };
+  add.onclick = submit; input.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
+  const list = el('ul');
+  for (const p of st.excluded) { const rm = el('button', { className: 'quiet sm', textContent: 'Remove' }); rm.onclick = async () => { await ask('exclude:remove', { pattern: p }); render(); }; list.append(el('li', { className: 'row' }, el('code', { textContent: p }), rm)); }
+  app.append(header('Excluded sites', true),
+    el('p', { textContent: 'On these sites there is no page button, the agent cannot run scripts, saved scripts do not run, and their tabs are left out of what the agent is told. A site covers its subdomains; add a path to cover only part of one.' }),
+    el('div', { className: 'row' }, input, add), st.excluded.length ? list : el('p', { textContent: 'Nothing is excluded yet. “Hide on this site” in the chat panel adds the site you are on.' }));
+}
+
+function renderScripts(st) {
+  app.append(header('Saved scripts', true), el('p', { textContent: 'Scripts the agent asked to keep. An approved script that is on runs on every visit to its sites, with nobody watching, so each one stays off until you approve it. Excluded sites and Pause always win.' }));
+  if (!st.scripts.length) return void app.append(el('p', { textContent: 'None yet. Ask your session to remember a script for a site.' }));
+  const list = el('ul');
+  for (const s of st.scripts) {
+    const act = async (patch) => { await ask('scripts:set', { id: s.id, ...patch }); render(); };
+    const main = s.approved ? Object.assign(el('button', { className: s.enabled ? 'sm' : 'quiet sm', textContent: s.enabled ? 'On' : 'Off' }), { onclick: () => act({ enabled: !s.enabled }) }) : Object.assign(el('button', { className: 'sm', textContent: 'Approve' }), { onclick: () => act({ approved: true, enabled: true }) });
+    const del = Object.assign(el('button', { className: 'quiet sm', textContent: s.approved ? 'Delete' : 'Reject' }), { onclick: () => act({ remove: true }) });
+    list.append(el('li', {}, el('div', { className: 'row' }, el('div', { className: 't', textContent: s.name }), el('div', { className: 'btns' }, main, del)),
+      el('div', { className: 's', textContent: `${s.approved ? '' : 'waiting for you · '}${s.match.join(', ')}` }),
+      el('details', {}, el('summary', { textContent: 'show the script' }), el('pre', { textContent: s.code }))));
+  }
+  app.append(list);
+}
+
+function clearButton(label) {
+  const b = el('button', { className: 'quiet danger', textContent: label });
+  b.onclick = async () => { if (label === 'Clear everything' && !confirm('Forget the backup code, the linked session, excluded sites and saved scripts?')) return; await ask('clear'); page = 'main'; render(); };
   return b;
 }
 
-chrome.storage.onChanged.addListener((changes) => { if (changes.log || changes.attached) render(); });
-render();
+api.storage.onChanged.addListener((changes) => { if (page === 'main' && (changes.log || changes.linked || changes.linkError || changes.scripts)) render(); });
+render().catch((e) => { app.replaceChildren(el('p', { className: 'err', textContent: e.message })); });

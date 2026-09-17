@@ -178,10 +178,22 @@ test("a <joy-browser-execute> block survives parseJoyTags verbatim", () => {
   expect(r.text).not.toContain("joy-notify");
 });
 
+test("a <joy-browser-remember> block survives parseJoyTags verbatim", () => {
+  const block = '<joy-browser-remember name="Hide > the bar" match="x.test, *.y.test/app/*">\ndocument.querySelector("#bar")?.remove();\n</joy-browser-remember>';
+  const r = parseJoyTags(`Saving it.\n\n${block}\n\n<joy-title value="Remembered" />`);
+  expect(r.title).toBe("Remembered");
+  expect(r.text).toContain(block);
+});
+
 test("every harness is taught the browser tag, and that its answer is a turn boundary", () => {
   for (const prompt of [codexJoyInstructions(), opencodeJoyPreamble(), joyPromptReinjection()]) {
     expect(prompt).toContain("<joy-browser-execute>");
     expect(prompt).toContain('<joy-message from="browser">');
+    // The remembered-script tag, and the two rules that keep it safe: the user
+    // approves, and an excluded site is not something to route around.
+    expect(prompt).toContain("<joy-browser-remember name=");
+    expect(prompt).toContain("you cannot approve it");
+    expect(prompt).toContain("do not reach the site another way");
     expect(prompt).toContain("END YOUR TURN");
   }
 });
