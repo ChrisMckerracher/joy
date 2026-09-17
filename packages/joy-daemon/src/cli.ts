@@ -7,6 +7,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, openSync, fchmodSync, rmSync, readlinkSync, realpathSync } from "fs";
 import { join, dirname, resolve, basename, sep, isAbsolute } from "path";
+import { serviceEnvPath } from "./servicePath";
 import { homedir, platform as osPlatform } from "os";
 import { spawn, spawnSync } from "child_process";
 import { moduleDir } from "./esm";
@@ -850,9 +851,17 @@ function cmdInstall(): number {
   // this machine's shells too — a machine paired before relay.json existed
   // resolves it from its one pairing, and pins it here.
   writeRelayJson(joyRelayUrl());
+  // The PATH the service gets: NOT the installing shell's verbatim. That PATH
+  // carries per-shell fnm directories which vanish on reboot, and every session
+  // the daemon spawns inherits it (servicePath.ts).
+  const fnmAlias = join(homedir(), ".local", "share", "fnm", "aliases", "default", "bin");
+  const servicePath = serviceEnvPath(process.env.PATH ?? "", {
+    nodeDir: dirname(NODE),
+    aliasDir: existsSync(fnmAlias) ? fnmAlias : null,
+  });
   removeService(); // idempotent: start from a clean slate so the new config takes effect
   if (plat === "linux") {
-    const unit = systemdUnit({ node: NODE, serverTs: SERVER_TS, pkgDir: PKG_DIR, path: process.env.PATH ?? "", relayUrl: joyRelayUrl(), homeDir: joyHomeDir() });
+    const unit = systemdUnit({ node: NODE, serverTs: SERVER_TS, pkgDir: PKG_DIR, path: servicePath, relayUrl: joyRelayUrl(), homeDir: joyHomeDir() });
     const path = systemdUnitPath();
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, unit);
@@ -874,7 +883,7 @@ function cmdInstall(): number {
       node: NODE,
       serverTs: SERVER_TS,
       pkgDir: PKG_DIR,
-      path: process.env.PATH ?? "",
+      path: servicePath,
       relayUrl: joyRelayUrl(),
       homeDir: joyHomeDir(),
       logFile: LOG_FILE,
