@@ -35,6 +35,7 @@ joy mirrors terminal coding agents — Claude Code, Codex, OpenCode, and Pi — 
 - **[joy-daemon](packages/joy-daemon)** — the daemon and the `joy` command line. One per machine. It starts and adopts agent sessions, reads their state, and bridges them to the relay.
 - **[joy-relay](packages/joy-relay)** — the only server: accounts, machine pairing, the durable message queue, push notifications, and an end-to-end encrypted tunnel to each daemon.
 - **[joy-mcp](packages/joy-mcp)** — an optional MCP server that gives the Claude app or Claude Code access to your sessions.
+- **[joy-browser](packages/joy-browser)** — an optional Chrome extension that lets a session run scripts in your own browser, over the relay.
 
 ## Quick start
 

@@ -22,6 +22,7 @@ These pages are for people using joy. If you want to work on joy itself, start w
 | [Usage and limits](guides/usage-and-limits.md) | The "% left" in the composer, account quota windows, and cost by project and model |
 | [Voice](guides/voice.md) | Talking to your sessions through your own ElevenLabs agent |
 | [Scripting and agents](guides/scripting-and-agents.md) | Driving joy from scripts and from agents, messages between sessions, and the tags an agent can write |
+| [Your browser](guides/browser.md) | Letting an agent act in your own browser through the Joy Browser extension, and what it can and cannot run |
 
 ## Reference
 

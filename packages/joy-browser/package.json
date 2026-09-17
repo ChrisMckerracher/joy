@@ -1,0 +1,14 @@
+{
+  "name": "@fny/joy-browser",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A browser extension that lets a joy session run JavaScript in your browser",
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "engines": {
+    "npm": ">=11.10.0"
+  }
+}

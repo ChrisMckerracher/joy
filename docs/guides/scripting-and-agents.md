@@ -130,6 +130,18 @@ Mark a background command as a process that runs until something stops it, such 
 
 `id` is the background id Claude Code reported when it started the command. A marked process is counted as a running process next to the session's status, not as a task that will finish, so it does not hold back the session's "Finished" notification.
 
+### Browser script: `<joy-browser-execute>`
+
+Run JavaScript in a browser that is attached to the session through the Joy Browser extension.
+
+```text
+<joy-browser-execute url="https://example.com/pricing">
+return document.querySelector(".price").textContent;
+</joy-browser-execute>
+```
+
+The body runs as an async function in the page, and `return` is the answer. With no attribute it runs in the active tab; `tab="123"` names a tab, `url="…"` opens one, and `tab="list"` reports the open tabs. The agent ends its turn after the tag, and the result arrives as its next message, marked `from="browser"`. Nothing runs unless a browser is attached. See [Your browser](browser.md).
+
 ## One-shot runs
 
 `joy run` is joy's version of `claude -p`: it starts a throwaway session, sends one prompt, prints the reply, then ends the session and deletes its transcript.

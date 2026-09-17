@@ -10,7 +10,7 @@ import { writeFileAtomic } from "../domain/atomicWrite";
 // the app renders as a tap-to-pick options card. A plain Claude Code terminal
 // can't receive a per-message system prompt, so we instead bake this into the
 // session at launch with `--append-system-prompt`.
-import { OPTIONS_SECTION, IMAGES_SECTION, FILES_SECTION, NOTIFY_SECTION, TITLE_SECTION, PEERS_SECTION, CLI_SECTION } from "../domain/agentTagsPrompt";
+import { OPTIONS_SECTION, IMAGES_SECTION, FILES_SECTION, NOTIFY_SECTION, TITLE_SECTION, PEERS_SECTION, BROWSER_SECTION, CLI_SECTION } from "../domain/agentTagsPrompt";
 
 // Claude-only extras layered onto the shared tag sections (agentTagsPrompt.ts
 // is the single source of truth for the cross-agent wording).
@@ -38,6 +38,7 @@ export const OPTIONS_SYSTEM_PROMPT = [
   NOTIFY_SECTION,
   TITLE_SECTION,
   PEERS_SECTION,
+  BROWSER_SECTION,
   CLI_SECTION,
 ].join("\n\n");
 

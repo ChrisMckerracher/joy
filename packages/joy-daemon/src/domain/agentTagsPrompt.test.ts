@@ -1,7 +1,7 @@
 // Daemon-side <joy-title>/<joy-notify> parsing: code is documentation, not
 // control (#528); attributes in any order (#529).
-import { describe, it, expect } from "vitest";
-import { parseJoyTags } from "./agentTagsPrompt";
+import { describe, it, test, expect } from "vitest";
+import { parseJoyTags, codexJoyInstructions, opencodeJoyPreamble, joyPromptReinjection } from "./agentTagsPrompt";
 
 describe("parseJoyTags", () => {
   it("tags inside fenced or inline code are literal text, not control (#528)", () => {
@@ -162,4 +162,26 @@ describe("parseJoyTags", () => {
     const open = parseJoyTags('<joy-title value="never closed\n<joy-title value="Closed" />');
     expect(open.title).toBe("Closed");
   });
+});
+
+// The Joy Browser extension reads <joy-browser-execute> out of the text record
+// the relay carries. Codex and OpenCode text goes through parseJoyTags first,
+// so the tag — script and all — has to come out the other side untouched, even
+// when a title or notify tag beside it is stripped.
+test("a <joy-browser-execute> block survives parseJoyTags verbatim", () => {
+  const block = '<joy-browser-execute url="https://x.test/?a>b">\nconst n = document.querySelectorAll("a").length;\nreturn n > 1 && n < 9;\n</joy-browser-execute>';
+  const r = parseJoyTags(`Checking.\n\n<joy-title value="Browser work" />\n\n${block}\n\n<joy-notify message="Ran it" />`);
+  expect(r.title).toBe("Browser work");
+  expect(r.notifies).toEqual([{ headline: "Ran it", detail: null }]);
+  expect(r.text).toContain(block);
+  expect(r.text).not.toContain("joy-title");
+  expect(r.text).not.toContain("joy-notify");
+});
+
+test("every harness is taught the browser tag, and that its answer is a turn boundary", () => {
+  for (const prompt of [codexJoyInstructions(), opencodeJoyPreamble(), joyPromptReinjection()]) {
+    expect(prompt).toContain("<joy-browser-execute>");
+    expect(prompt).toContain('<joy-message from="browser">');
+    expect(prompt).toContain("END YOUR TURN");
+  }
 });
