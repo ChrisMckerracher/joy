@@ -10,6 +10,7 @@ import { getImagesFromClipboard, getImagesFromDrop, fileToAttachmentPreview } fr
 import { composerSlots } from './composerSlots';
 import { layout } from './layout';
 import { MultiTextInput, KeyPressEvent, MULTI_TEXT_INPUT_FONT_SIZE, MULTI_TEXT_INPUT_LINE_HEIGHT } from './MultiTextInput';
+import { COMPOSER_MAX_LINES, maxHeightForLines } from './composerHeight';
 import { Typography } from '@/constants/Typography';
 import { useChatFontScale } from '@/hooks/useChatFontScale';
 import { PermissionMode, ModelMode } from './PermissionModeSelector';
@@ -593,7 +594,14 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const chatFontScale = useChatFontScale();
     const inputFontSize = MULTI_TEXT_INPUT_FONT_SIZE * chatFontScale;
     const inputLineHeight = Math.round(MULTI_TEXT_INPUT_LINE_HEIGHT * chatFontScale);
-    const inputMaxHeight = Math.round((Platform.OS === 'web' ? 480 : 120) * chatFontScale);
+    const inputPaddingVertical = Platform.OS === 'web' ? 10 : 8;
+    // On a phone the composer shows at most three lines and scrolls past that,
+    // derived from the scaled line height so it is three lines at every font
+    // scale rather than a pixel count that quietly means fewer. Web keeps its
+    // taller cap: there is room for it, and a pointer can drag the window.
+    const inputMaxHeight = Platform.OS === 'web'
+        ? Math.round(480 * chatFontScale)
+        : maxHeightForLines(COMPOSER_MAX_LINES, inputLineHeight, inputPaddingVertical * 2);
 
     // `hasText` drives only the send-button appearance/enabled state. It's
     // updated via startTransition from the keystroke handler so a busy reducer
@@ -1230,8 +1238,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         <MultiTextInput
                             ref={inputRef}
                             defaultValue={props.initialValue}
-                            paddingTop={Platform.OS === 'web' ? 10 : 8}
-                            paddingBottom={Platform.OS === 'web' ? 10 : 8}
+                            paddingTop={inputPaddingVertical}
+                            paddingBottom={inputPaddingVertical}
                             fontSize={inputFontSize}
                             lineHeight={inputLineHeight}
                             onChangeText={handleTextChange}

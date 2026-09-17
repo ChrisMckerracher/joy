@@ -1,58 +1,44 @@
 import { describe, it, expect } from 'vitest';
-import { composerHeight, shouldCommitHeight } from './composerHeight';
-
-const base = { minHeight: 40, maxHeight: 120 };
+import { composerHeight, maxHeightForLines, COMPOSER_MAX_LINES } from './composerHeight';
 
 describe('composerHeight', () => {
-    it('collapses to one line when empty — even with a tall stale measurement', () => {
-        // This is the bug: a long message is sent, the field clears, and the
-        // last intrinsic height (at the cap) never goes away.
-        expect(composerHeight({ ...base, measured: 120, isEmpty: true })).toBe(40);
-        expect(composerHeight({ ...base, measured: 300, isEmpty: true })).toBe(40);
+    it('collapses to one line when empty — that is the one thing the platform gets wrong', () => {
+        // A long message is sent, the field clears, and without this the last
+        // intrinsic height never goes away.
+        expect(composerHeight({ isEmpty: true, minHeight: 40 })).toBe(40);
     });
 
-    it('grows with content up to the cap', () => {
-        expect(composerHeight({ ...base, measured: 72, isEmpty: false })).toBe(72);
-        expect(composerHeight({ ...base, measured: 500, isEmpty: false })).toBe(120);
+    it('forces nothing while there is text, so the field grows on its own', () => {
+        // The regression: pinning a height here handed growth to a measurement
+        // that does not grow on every device, and the field stuck at one line.
+        expect(composerHeight({ isEmpty: false, minHeight: 40 })).toBeNull();
     });
 
-    it('never goes below one line', () => {
-        expect(composerHeight({ ...base, measured: 12, isEmpty: false })).toBe(40);
-        expect(composerHeight({ ...base, measured: 0, isEmpty: false })).toBe(40);
-    });
-
-    it('falls back to one line when nothing has been measured yet', () => {
-        expect(composerHeight({ ...base, measured: null, isEmpty: false })).toBe(40);
-        expect(composerHeight({ ...base, measured: NaN, isEmpty: false })).toBe(40);
-    });
-
-    it('rounds up so a fractional line is never clipped', () => {
-        expect(composerHeight({ ...base, measured: 72.2, isEmpty: false })).toBe(73);
-    });
-
-    it('survives a max below the min without inverting', () => {
-        expect(composerHeight({ minHeight: 40, maxHeight: 10, measured: 80, isEmpty: false })).toBe(40);
+    it('never collapses to a nonsensical floor', () => {
+        expect(composerHeight({ isEmpty: true, minHeight: 0 })).toBe(1);
+        expect(composerHeight({ isEmpty: true, minHeight: -10 })).toBe(1);
     });
 });
 
-describe('shouldCommitHeight', () => {
-    it('always commits the first measurement', () => {
-        expect(shouldCommitHeight(null, 40, 40)).toBe(true);
+describe('maxHeightForLines', () => {
+    it('caps at the requested number of lines plus the field padding', () => {
+        // One line of 22 plus 16 of padding is the collapsed height; three
+        // lines is what the composer grows to before it scrolls.
+        expect(maxHeightForLines(1, 22, 16)).toBe(38);
+        expect(maxHeightForLines(COMPOSER_MAX_LINES, 22, 16)).toBe(82);
     });
 
-    it('ignores sub-pixel jitter on the typing path', () => {
-        expect(shouldCommitHeight(72, 72.4, 40)).toBe(false);
-        expect(shouldCommitHeight(72, 71.7, 40)).toBe(false);
+    it('scales with the line height, so the visible line count is what stays fixed', () => {
+        expect(maxHeightForLines(3, 28, 16)).toBe(100);
+        expect(maxHeightForLines(3, 17, 16)).toBe(67);
     });
 
-    it('commits a real change', () => {
-        expect(shouldCommitHeight(72, 96, 40)).toBe(true);
+    it('rounds up so a fractional line is never clipped', () => {
+        expect(maxHeightForLines(3, 21.5, 16)).toBe(81);
     });
 
-    it('always commits a collapse back to the floor', () => {
-        // The one change that must never be filtered out — dropping it is the
-        // original bug wearing a different hat.
-        expect(shouldCommitHeight(40.5, 40, 40)).toBe(true);
-        expect(shouldCommitHeight(120, 40, 40)).toBe(true);
+    it('never returns less than a single line, whatever it is asked for', () => {
+        expect(maxHeightForLines(0, 22, 16)).toBe(38);
+        expect(maxHeightForLines(-2, 22, 0)).toBe(22);
     });
 });

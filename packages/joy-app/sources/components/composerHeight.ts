@@ -1,53 +1,55 @@
 /**
- * How tall the composer's text area should be (#648).
+ * How tall a composer's text area should be (#648, and the regression it left).
  *
- * It used to have no explicit height at all, relying on iOS sizing a
- * `multiline` TextInput to its content under a `maxHeight` cap. That grows
- * fine and does not reliably shrink: clearing the field through `value` — the
- * only mutation path Fabric honours — leaves the last measured intrinsic
- * height in place. Send a twelve-line message and the empty box stays at the
- * 120pt cap, with `minHeight: 40` setting a floor that nothing ever pulls it
- * back down to.
+ * There are two jobs here, and conflating them is what broke the field:
  *
- * So the height becomes state, driven by the measurements the platform
- * reports, and this decides what to do with them.
+ *  - GROWING with the text is the platform's own job, and it is good at it: a
+ *    multiline TextInput sizes itself to its content under a maxHeight cap.
+ *  - SHRINKING when the text is cleared through `value` is the part iOS does
+ *    NOT do. The last intrinsic height stays, so sending a twelve-line message
+ *    left the empty box stranded at the cap.
+ *
+ * #648 fixed the shrink by pinning `height` to the content size reported by
+ * onContentSizeChange on every render. That also took growth away from the
+ * platform and handed it to a measurement — and where that measurement does
+ * not grow (it reports the view's own height once the view has an explicit
+ * one), the field is stuck at a single line however much you type.
+ *
+ * So the height is forced ONLY where the platform gets it wrong: an empty
+ * field collapses to one line. With text in it the answer is null — no
+ * explicit height, and the field sizes itself between minHeight and maxHeight
+ * as it always did.
  */
 
 export interface ComposerHeightInput {
-    /** Content height last reported by onContentSizeChange, if any. */
-    measured: number | null;
-    /** Is the field empty? Empty always collapses, whatever was measured. */
+    /** Is the field empty? Empty always collapses to one line. */
     isEmpty: boolean;
     /** One line of text, including the field's vertical padding. */
     minHeight: number;
-    /** The cap; content beyond this scrolls inside the field. */
-    maxHeight: number;
 }
 
 /**
- * Empty collapses to one line unconditionally — that is the whole fix, and it
- * must not depend on a measurement arriving, because the stale measurement IS
- * the bug. Otherwise clamp what was measured into [min, max].
- */
-export function composerHeight({ measured, isEmpty, minHeight, maxHeight }: ComposerHeightInput): number {
-    const floor = Math.max(1, minHeight);
-    const ceiling = Math.max(floor, maxHeight);
-    if (isEmpty) return floor;
-    if (measured == null || !Number.isFinite(measured)) return floor;
-    return Math.min(ceiling, Math.max(floor, Math.ceil(measured)));
-}
-
-/**
- * Should a newly measured height replace the one in state?
+ * The explicit height to apply, or null to let the field size itself.
  *
- * iOS reports content size on nearly every keystroke, often with sub-pixel
- * jitter that changes nothing visible. Committing each one re-renders the
- * component on the typing path for no reason, so ignore movement below a
- * pixel — but never ignore a change that crosses the floor, or a collapse
- * back to it would be the thing that gets dropped.
+ * Empty collapses unconditionally — it must not wait for a measurement to
+ * arrive, because a stale measurement is exactly the bug this exists to fix.
  */
-export function shouldCommitHeight(prev: number | null, next: number, minHeight: number): boolean {
-    if (prev == null) return true;
-    if (next <= minHeight && prev > minHeight) return true;
-    return Math.abs(next - prev) >= 1;
+export function composerHeight({ isEmpty, minHeight }: ComposerHeightInput): number | null {
+    if (!isEmpty) return null;
+    return Math.max(1, minHeight);
+}
+
+/** How many lines a composer grows to before its content starts scrolling. */
+export const COMPOSER_MAX_LINES = 3;
+
+/**
+ * The cap for a field that should show at most `lines` lines.
+ *
+ * Derived from the line height rather than written down as a pixel count, so
+ * the visible LINE COUNT stays the same at every chat font scale — the pixel
+ * cap moves with the text instead of silently showing fewer lines as the font
+ * grows.
+ */
+export function maxHeightForLines(lines: number, lineHeight: number, verticalPadding: number): number {
+    return Math.ceil(lineHeight * Math.max(1, lines) + Math.max(0, verticalPadding));
 }

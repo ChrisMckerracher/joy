@@ -3,7 +3,7 @@ import { Text, TextInput, Platform, View, NativeSyntheticEvent, TextInputKeyPres
 import { useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { isNewlineInsertedAtSelection, PendingNewlineSwallow } from './newlineSwallow';
-import { composerHeight, shouldCommitHeight } from './composerHeight';
+import { composerHeight } from './composerHeight';
 
 export type SupportedKey = 'Enter' | 'Escape' | 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight' | 'Tab';
 
@@ -87,19 +87,15 @@ export const MultiTextInput = React.memo(React.forwardRef<MultiTextInputHandle, 
     // Synchronous mirror so imperative getText() never lags a state commit.
     const latestTextRef = React.useRef<string>(text);
     latestTextRef.current = text;
-    // Explicit height (#648). iOS grows a multiline TextInput to its content
-    // but does not shrink it when the text is cleared through `value`, so a
-    // long message left the empty field stuck at maxHeight. Height is state
-    // now: measured from onContentSizeChange, collapsed unconditionally when
-    // the text is empty (a stale measurement is exactly what went wrong).
-    const [measuredHeight, setMeasuredHeight] = React.useState<number | null>(null);
+    // Height (#648, and the regression it left). Growth belongs to the
+    // platform: a multiline TextInput sizes itself to its content between
+    // minHeight and maxHeight. The one thing it gets wrong is shrinking when
+    // the text is cleared through `value`, so THAT is all we force — see
+    // composerHeight. Driving the height from onContentSizeChange instead made
+    // the field's height its own input, and on a device that reports the view
+    // height back it never grew past one line.
     // One line plus the field's own vertical padding — the floor to collapse to.
     const minHeight = Math.ceil(lineHeight + (props.paddingTop ?? 0) + (props.paddingBottom ?? 0));
-    const handleContentSizeChange = React.useCallback((e: { nativeEvent: { contentSize: { height: number } } }) => {
-        const next = e?.nativeEvent?.contentSize?.height;
-        if (typeof next !== 'number') return;
-        setMeasuredHeight((prev) => (shouldCommitHeight(prev, next, minHeight) ? next : prev));
-    }, [minHeight]);
 
     // Caret to apply after an imperative text set. Applied in a layout effect
     // so it runs once the new `value` is committed to the native view, using
@@ -126,8 +122,11 @@ export const MultiTextInput = React.memo(React.forwardRef<MultiTextInputHandle, 
         fontSize,
         lineHeight,
         maxHeight,
-        // Driven, not intrinsic — see composerHeight.
-        height: composerHeight({ measured: measuredHeight, isEmpty: text.length === 0, minHeight, maxHeight }),
+        // The floor the field sizes itself up from; maxHeight is the ceiling
+        // it scrolls past. An explicit height is forced ONLY to collapse an
+        // empty field — see composerHeight.
+        minHeight,
+        height: composerHeight({ isEmpty: text.length === 0, minHeight }) ?? undefined,
         color: theme.colors.input.text,
         textAlignVertical: 'top' as const,
         padding: 0,
@@ -313,7 +312,6 @@ export const MultiTextInput = React.memo(React.forwardRef<MultiTextInputHandle, 
                     onKeyPress={handleKeyPress}
                     onSelectionChange={handleSelectionChange}
                     multiline={true}
-                    onContentSizeChange={handleContentSizeChange}
                     autoCapitalize={isCommandLine ? 'none' : 'sentences'}
                     autoCorrect={!isCommandLine}
                     spellCheck={!isCommandLine}

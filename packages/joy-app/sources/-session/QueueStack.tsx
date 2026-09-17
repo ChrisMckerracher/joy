@@ -5,6 +5,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { COMPOSER_MAX_LINES, maxHeightForLines } from '@/components/composerHeight';
 
 // ONE stack component for everything pinned above the composer. Two instances:
 //   Waiting — every message you sent that has not reached the agent yet,
@@ -18,7 +19,15 @@ import { t } from '@/text';
 // Height is bounded at VISIBLE_ROWS; past that the stack scrolls, so a long
 // queue can never take the whole screen.
 const VISIBLE_ROWS = 3;
-const ROW_HEIGHT = 60 + 6; // input minHeight + gap
+// A row is ONE line at rest and grows to three, by newlines or by wrapping,
+// exactly like the composer below it — a queued message is the same kind of
+// text, and a fixed three-line-tall box for a five-word entry wasted the
+// screen the stack is trying to stay out of.
+const ROW_LINE_HEIGHT = 20;
+const ROW_PADDING_VERTICAL = 8;
+const ROW_MIN_HEIGHT = maxHeightForLines(1, ROW_LINE_HEIGHT, ROW_PADDING_VERTICAL * 2);
+const ROW_MAX_HEIGHT = maxHeightForLines(COMPOSER_MAX_LINES, ROW_LINE_HEIGHT, ROW_PADDING_VERTICAL * 2);
+const ROW_HEIGHT = ROW_MIN_HEIGHT + 6; // a collapsed row + the gap under it
 
 export interface QueueRowModel {
     id: string;
@@ -167,9 +176,13 @@ const styles = StyleSheet.create((theme) => ({
     row: { gap: 4 },
     inputWrap: { position: 'relative' },
     input: {
-        minHeight: 60, maxHeight: 120, borderRadius: 12,
-        paddingHorizontal: 12, paddingVertical: 8, paddingRight: 76,
-        fontSize: 15, ...Typography.default(),
+        minHeight: ROW_MIN_HEIGHT, maxHeight: ROW_MAX_HEIGHT, borderRadius: 12,
+        paddingHorizontal: 12, paddingVertical: ROW_PADDING_VERTICAL, paddingRight: 76,
+        // Explicit, because the row's one- and three-line heights are computed
+        // from it; and top-aligned so a growing row fills downwards on Android
+        // instead of centring its first line.
+        fontSize: 15, lineHeight: ROW_LINE_HEIGHT, textAlignVertical: 'top',
+        ...Typography.default(),
     },
     actions: { position: 'absolute', right: 6, top: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', gap: 4 },
     iconButton: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center' },
