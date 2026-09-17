@@ -95,6 +95,10 @@ manager configuration.
 
 The daemon runs straight from TypeScript with `tsx`, which does not type-check, so run `pnpm typecheck` before you trust a change. Each machine's daemon also serves its own API reference at `/docs` on its local port, and a relay serves its own at `/docs`.
 
+Shipping any of the four deployable pieces — the daemon, the app on phones, the app on
+desktop and web, and the relay — is written down in [RELEASE.md](RELEASE.md): what to
+bump, what order to ship in, and how to check each one landed.
+
 joy began as a fork of [Happy Coder](https://github.com/slopus/happy) and is now its own system.
 
 ## License
