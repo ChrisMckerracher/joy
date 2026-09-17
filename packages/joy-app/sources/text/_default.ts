@@ -600,6 +600,7 @@ export const en = {
         thinkingSince: 'Thinking Since',
         cliVersion: 'CLI Version',
         cliVersionOutdated: 'CLI Update Required',
+        appVersionOutdated: 'App Update Required',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>
             `Version ${currentVersion} installed. Update to ${requiredVersion} or later`,
         deleteSession: 'Delete Session',

@@ -552,6 +552,7 @@ export const zhHans: TranslationStructure = {
         thinkingSince: '思考开始时间',
         cliVersion: 'CLI 版本',
         cliVersionOutdated: '需要更新 CLI',
+        appVersionOutdated: '需要更新应用',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>
             `已安装版本 ${currentVersion}。请更新到 ${requiredVersion} 或更高版本`,
         deleteSession: '删除会话',

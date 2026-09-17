@@ -551,6 +551,7 @@ export const ca: TranslationStructure = {
         thinkingSince: 'Pensant des de',
         cliVersion: 'Versió del CLI',
         cliVersionOutdated: 'Actualització del CLI requerida',
+        appVersionOutdated: 'Actualització de l\'app requerida',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>
             `Versió ${currentVersion} instal·lada. Actualitzeu a ${requiredVersion} o posterior`,
         deleteSession: 'Elimina la sessió',

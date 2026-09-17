@@ -568,6 +568,7 @@ export const pl: TranslationStructure = {
         thinkingSince: 'Myśli od',
         cliVersion: 'Wersja CLI',
         cliVersionOutdated: 'Wymagana aktualizacja CLI',
+        appVersionOutdated: 'Wymagana aktualizacja aplikacji',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>
             `Zainstalowana wersja ${currentVersion}. Zaktualizuj do ${requiredVersion} lub nowszej`,
         deleteSession: 'Usuń sesję',

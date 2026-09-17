@@ -46,7 +46,7 @@ import { GitFileStatus } from '@/sync/gitStatusModel';
 import { useOverlayNav } from '@/-session/sessionOverlayNav';
 import { formatPathRelativeToHome, getResumeCommandBlock, getSessionName, useSessionStatus } from '@/utils/sessionUtils';
 import { useSessionQuickActions } from '@/hooks/useSessionQuickActions';
-import { isVersionSupported, MINIMUM_CLI_VERSION } from '@/utils/versionUtils';
+import { daemonCompatibility, isCompatWarning } from '@/utils/daemonCompat';
 import { copyToClipboard } from '@/utils/clipboard';
 import { guarded } from '@/utils/guardAsync';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -609,12 +609,15 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
     // one session leaves the bar open in the next one you visit.
     React.useEffect(() => () => useSessionSearch.getState().setOpen(false), []);
 
-    // Check if CLI version is outdated and not already acknowledged
     const cliVersion = session.metadata?.version;
     const machineId = session.metadata?.machineId;
-    const isCliOutdated = cliVersion && !isVersionSupported(cliVersion, MINIMUM_CLI_VERSION);
+    // Two-sided: the daemon can be below our floor, or past what this app
+    // understands. Both are mismatches and each needs a DIFFERENT instruction,
+    // so the verdict picks the message rather than assuming the machine is at
+    // fault. `unknown` (absent or malformed) warns about nothing (#645).
+    const compat = daemonCompatibility(cliVersion);
     const isAcknowledged = machineId && acknowledgedCliVersions[machineId] === cliVersion;
-    const shouldShowCliWarning = isCliOutdated && !isAcknowledged;
+    const shouldShowCliWarning = isCompatWarning(compat) && !isAcknowledged;
     const isJoyDaemon = isJoyDaemonSource(session.metadata?.joy__source);
     // joy sessions carry no `flavor` in metadata (just joy__source); they're
     // always Claude, so coerce it so model/effort lookups resolve.
@@ -1365,7 +1368,7 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                         color: '#856404',
                         fontWeight: '600'
                     }}>
-                        {t('sessionInfo.cliVersionOutdated')}
+                        {t(compat === 'app_too_old' ? 'sessionInfo.appVersionOutdated' : 'sessionInfo.cliVersionOutdated')}
                     </Text>
                     <Ionicons name="close" size={14} color="#856404" style={{ marginLeft: 8 }} />
                 </Pressable>

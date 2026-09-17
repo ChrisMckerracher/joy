@@ -552,6 +552,7 @@ export const ja: TranslationStructure = {
         thinkingSince: '思考開始時刻',
         cliVersion: 'CLIバージョン',
         cliVersionOutdated: 'CLIの更新が必要',
+        appVersionOutdated: 'アプリの更新が必要',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>
             `バージョン ${currentVersion} がインストールされています。${requiredVersion} 以降に更新してください`,
         deleteSession: 'セッションを削除',

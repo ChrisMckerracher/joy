@@ -396,6 +396,7 @@ export const ru: TranslationStructure = {
         thinkingSince: 'Думает с',
         cliVersion: 'Версия CLI',
         cliVersionOutdated: 'Требуется обновление CLI',
+        appVersionOutdated: 'Требуется обновление приложения',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>
             `Установлена версия ${currentVersion}. Обновите до ${requiredVersion} или новее`,
         deleteSession: 'Удалить сессию',
