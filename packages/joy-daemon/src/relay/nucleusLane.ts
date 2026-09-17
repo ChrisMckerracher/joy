@@ -2595,7 +2595,32 @@ export function startNucleusLane(opts: NucleusLaneOpts): NucleusLaneHandle {
   }
 
   async function announceLocalSession(session: AgentSession): Promise<void> {
-    if (!lease() || boundByLocal.has(session.id) || announcing.has(session.id)) return;
+    if (!lease() || announcing.has(session.id)) return;
+    // Already bound: there is no row to announce, but there may be no CARD
+    // PUBLISHER either. A session whose runtime died with the machine (reboot:
+    // the per-session tmux server is gone) is bound by refreshBindings and
+    // then archived by reconcileOrphans in that same pass, with no publisher
+    // wired because it had no live handle at that moment. When the user later
+    // resumes it, nothing re-wires one: this function returned at the door,
+    // announceUnboundSessions skips bound sessions, and reconcileOrphans only
+    // ever examines `active`/`starting` rows — so the row stayed `archived`
+    // until the daemon restarted (metal.voltai.party, 2026-09-17).
+    // Wiring here republishes the card, and cardStateFor maps a running card
+    // back to `active`. Idempotent: publishers are a map keyed by local id.
+    const alreadyBound = boundByLocal.get(session.id);
+    if (alreadyBound) {
+      // This runs OUTSIDE the try below, and the wiring CAN throw: flushUnbound
+      // commits a ledger bind, cardMetadata() is per-adapter code, and
+      // reassertBudget publishes outside its own guard. A resume must never
+      // take the daemon down over any of them — the row simply stays archived
+      // until the next boot pass wires the publisher, which is the behaviour
+      // this fix replaces, not a regression beyond it.
+      if (stillLive(session)) {
+        try { wireCardPublisher(session.id, alreadyBound); }
+        catch (e) { log(`rewire ${session.id} → row ${alreadyBound.slice(0, 8)} failed: ${e instanceof Error ? e.message : e}`); }
+      }
+      return;
+    }
     if (!stillLive(session)) return;
     announcing.add(session.id);
     try {

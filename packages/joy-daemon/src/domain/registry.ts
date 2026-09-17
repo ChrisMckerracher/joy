@@ -220,6 +220,12 @@ export class SessionRegistry {
     } finally {
       this.#replacing.delete(id);
     }
+    // The replacement has a RUNTIME again — tell the relay lane. Restart was
+    // the one path that gained a runtime without ever reaching it, so a row
+    // archived while the session had none (reboot → orphan sweep) stayed
+    // archived until the daemon restarted. The lane wires the card publisher
+    // for the existing binding; the republished card carries the live state.
+    void this.announce(id).catch((e) => process.stderr.write(`[restart] ${id}: announce failed: ${e instanceof Error ? e.message : e}\n`));
     return next;
   }
 
