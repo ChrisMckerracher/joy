@@ -75,8 +75,9 @@ const OBS: Record<string, Observation> = {
   "hook_notification(idle_prompt)": { type: "hook_notification", at: T, kind: "idle_prompt" },
   "hook_notification(elicitation)": { type: "hook_notification", at: T, kind: "elicitation_dialog" },
   "hook_notification(auth_success)": { type: "hook_notification", at: T, kind: "auth_success" },
-  "hook_session_edge(start)": { type: "hook_session_edge", at: T, edge: "start" },
-  "hook_session_edge(end)": { type: "hook_session_edge", at: T, edge: "end" },
+  "hook_session_edge(start)": { type: "hook_session_edge", at: T, edge: "start", reset: false },
+  "hook_session_edge(end)": { type: "hook_session_edge", at: T, edge: "end", reset: false },
+  "hook_session_edge(reset)": { type: "hook_session_edge", at: T, edge: "start", reset: true },
   "transcript_turn(open)": { type: "transcript_turn", at: T, open: true },
   "transcript_turn(close)": { type: "transcript_turn", at: T, open: false },
   output: { type: "output", at: T },
@@ -119,6 +120,7 @@ const EXPECTED: Record<(typeof FIXTURES)[number], Record<string, Kind>> = {
     ...same("busy"),
     hook_stop: "idle",                                 // THE idle edge with hooks live
     "hook_notification(idle_prompt)": "idle",          // 60 s at the prompt: the hook turn closes
+    "hook_session_edge(reset)": "idle",                // /clear or /resume replaced the conversation
     "hook_permission(main)": "needs_input", "hook_permission(agent)": "needs_input",
     "hook_notification(permission_prompt)": "needs_input", "hook_notification(elicitation)": "needs_input",
     ended: "ended",
@@ -147,6 +149,7 @@ const EXPECTED: Record<(typeof FIXTURES)[number], Record<string, Kind>> = {
     hook_stop: "idle",
     "hook_tool_done(main)": "busy",        // the main agent's tool completed: the wait is answered
     "hook_session_edge(start)": "busy", "hook_session_edge(end)": "busy",
+    "hook_session_edge(reset)": "idle",    // the conversation is gone: the wait and the turn go with it
     escape: "busy",                        // Escape dismisses the prompt; the hook turn is still open
     ended: "ended",
     // hook_tool_done(agent): a subagent's tool answers only its own wait.
@@ -243,6 +246,25 @@ describe("hooks live: the pane never sets, and clears only as a tie-breaker", ()
     r = run(r.state, [...polls(T + 3_000, 20, AMBIGUOUS), ...polls(T + 63_000, 20, TYPED_AHEAD)]);
     expect(r.state.thinking.on).toBe(true);
     expect(r.state.thinking.idlePolls).toBe(0);
+  });
+  test("/clear: the rotation edge ends the turn at once, with no Stop and no qualifying pane read", () => {
+    // The live wedge of 2026-09-17: /clear submits (thinking on, lease 0), fires
+    // no Stop — no turn ever ran — and repaints a splash the parser cannot
+    // place, so the tie-breaker counted nothing and the session read busy for
+    // 8m55s, until an unrelated repaint finally gave it six clean frames.
+    let r = run(live(), [{ type: "thinking", at: T, on: true }, { type: "lease", at: T, ms: 0 }, { type: "transcript_turn", at: T + 100, open: true }]);
+    r = run(r.state, polls(T + 3_000, 20, AMBIGUOUS));
+    expect(phaseOf(r.state).kind, "without the rotation edge nothing clears it").toBe("busy");
+    r = run(r.state, [{ type: "hook_session_edge", at: T + 63_000, edge: "end", reset: true }]);
+    expect(r.state.thinking.on).toBe(false);
+    expect(phaseOf(r.state).kind).toBe("idle");
+    expect(thinks(r.effects)).toEqual(["false:hook"]);
+  });
+  test("a compact edge is NOT turn-terminal: auto-compaction fires mid-turn and the turn goes on", () => {
+    let r = run(live(), [{ type: "hook_prompt", at: T, leaseMs: 170_000 }, { type: "transcript_turn", at: T + 100, open: true }]);
+    r = run(r.state, [{ type: "hook_session_edge", at: T + 1_000, edge: "start", reset: false }]);
+    expect(r.state.thinking.on).toBe(true);
+    expect(phaseOf(r.state).kind).toBe("busy");
   });
   test("the lease holds the tie-breaker off; six idle reads inside it change nothing, six past it clear", () => {
     let r = run(live(), [{ type: "hook_prompt", at: T, leaseMs: 170_000 }]);

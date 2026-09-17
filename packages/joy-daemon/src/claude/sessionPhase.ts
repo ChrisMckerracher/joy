@@ -73,8 +73,11 @@ export type Observation =
   | { type: "hook_permission"; at: number; tool?: string; agent: string | null }
   /** Notification(notification_type). */
   | { type: "hook_notification"; at: number; kind: string }
-  /** SessionStart / SessionEnd — a conversation edge: any wait is over. */
-  | { type: "hook_session_edge"; at: number; edge: "start" | "end" }
+  /** SessionStart / SessionEnd — a conversation edge: any wait is over.
+   *  `reset` marks the edges that REPLACED the conversation (/clear, /resume):
+   *  those are turn-terminal. Never set for a compact edge — auto-compaction
+   *  fires mid-turn and the turn continues after it. */
+  | { type: "hook_session_edge"; at: number; edge: "start" | "end"; reset: boolean }
   /** The transcript's turn opened (`at` = when the daemon read it) or closed. */
   | { type: "transcript_turn"; at: number; open: boolean }
   /** Assistant output landed for the open turn. */
@@ -360,6 +363,21 @@ export function stepPhase(state: PhaseState, obs: Observation): StepResult {
     }
     case "hook_session_edge":
       s.wait = null;
+      // A /clear or /resume REPLACED the conversation, so whatever turn it was
+      // holding can never end by itself: no Stop fires (no turn ever ran) and
+      // the transcript rotated away before its turn_duration. This edge IS the
+      // terminal one. Without it the only rescue was the pane tie-breaker,
+      // which counts unambiguous empty-box reads only — and Claude's
+      // post-/clear splash gives none, so a /clear sat busy for nearly nine
+      // minutes (live trace 2026-09-17: 16:15:47 → 16:24:42). Closing the hook
+      // turn also neutralises an open transcript turn (turnClosedByHook), so
+      // the Session keeps owning its own #turn and its relay turn-end.
+      if (obs.reset) {
+        s.hookTurn = { open: false, at: obs.at };
+        s.thinking.leaseUntil = 0;
+        s.thinking.idlePolls = 0;
+        if (s.thinking.on) setThinking(false, "hook");
+      }
       return { state: s, effects };
     case "output":
       s.thinking.turnProducedOutput = true;

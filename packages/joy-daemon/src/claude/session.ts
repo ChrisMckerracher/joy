@@ -3913,6 +3913,16 @@ export class Session {
         const reason = str("end_reason") ?? str("reason") ?? "other";
         if (reason === "clear" || reason === "resume") {
           process.stderr.write(`[hook] ${this.id} SessionEnd reason=${reason} — conversation rotation, session stays\n`);
+          // The rotation ENDS whatever turn was open: /clear fires no Stop (no
+          // turn ever ran) and the transcript rotates away before its
+          // turn_duration, so without this edge nothing clears thinking and the
+          // session reads busy until the pane tie-breaker happens to catch it
+          // — nearly nine minutes in the live trace of 2026-09-17. (#636 set
+          // the lease to 0, which only unblocks that tie-breaker; a zero lease
+          // is not an idle edge.) Observed BEFORE the early return; the
+          // SessionStart that follows repeats it, and the machine is
+          // idempotent about it.
+          this.#observe({ type: "hook_session_edge", at: sessionClock.now(), edge: "end", reset: true });
           return { ok: true };
         }
         if (sid && this.claudeSessionId && sid !== this.claudeSessionId) {
@@ -3928,7 +3938,7 @@ export class Session {
         }
         process.stderr.write(`[hook] ${this.id} SessionEnd reason=${reason} — confirming exit in ${HOOK_SESSION_END_GRACE_MS}ms\n`);
         this.#hookSessionEnd = { reason, at: Date.now() };
-        this.#observe({ type: "hook_session_edge", at: sessionClock.now(), edge: "end" });
+        this.#observe({ type: "hook_session_edge", at: sessionClock.now(), edge: "end", reset: false });
         this.#armHookSessionEnd();
         return { ok: true };
       }
@@ -3941,7 +3951,12 @@ export class Session {
         const tp = str("transcript_path");
         process.stderr.write(`[hook] ${this.id} SessionStart sid=${sid ?? "?"} source=${str("source") ?? "?"}\n`);
         if (str("source") === "startup") this.#authFailure = null; // a fresh process starts with whatever creds it has
-        this.#observe({ type: "hook_session_edge", at: sessionClock.now(), edge: "start" });
+        // /clear and /resume REPLACED the conversation, so this edge is
+        // turn-terminal (see the SessionEnd rotation branch). `compact` is
+        // deliberately NOT: auto-compaction fires mid-turn and the turn goes on
+        // after it, so closing the turn here would read a working session idle.
+        const rotated = str("source") === "clear" || str("source") === "resume";
+        this.#observe({ type: "hook_session_edge", at: sessionClock.now(), edge: "start", reset: rotated });
         // STAGED binding (review finding 4, built per 5.6-sol audit #6): the
         // hook proposes {sid, path}; transcript ACTIVITY on that exact path
         // confirms it (see the starting-activation block) — persisting a sid
