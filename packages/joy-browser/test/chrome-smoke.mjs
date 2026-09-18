@@ -148,6 +148,22 @@ async function main() {
   if (!/status: error/.test(paused.text) || !/paused browser control/.test(paused.text)) throw new Error(`expected a paused refusal, got:\n${paused.text}`);
   step('paused: nothing runs, and the agent is told why');
   await endTurn(paused.turnId);
+
+  // Stop the actual MV3 worker, then wake it through the popup. No in-memory
+  // watcher/client survives; the persisted link, cursor and brakes must.
+  const before = await popup.evaluate(`chrome.storage.local.get(['linked', 'cursor'])`);
+  await popup.send('ServiceWorker.enable');
+  await popup.send('ServiceWorker.stopAllWorkers');
+  const resumed = await until('the restarted worker', () => popup.evaluate(`chrome.runtime.sendMessage({ type: 'status' })`).catch(() => null));
+  if (resumed.linked?.sessionId !== before.linked.sessionId || resumed.starting || !resumed.paused) throw new Error('worker restart lost the linked session or pause setting');
+  const cursor = await popup.evaluate(`chrome.storage.local.get('cursor').then((s) => s.cursor)`);
+  if (cursor < before.cursor) throw new Error('worker restart moved the cursor backwards');
+  await w.sendAsAccount('Check the browser after restarting.');
+  const afterRestart = await takePrompt('the prompt after worker restart');
+  const stillPaused = await agentTurn(afterRestart.turnId, '<joy-browser-execute>return 1;</joy-browser-execute>', 'the restarted watcher refusal');
+  if (!/paused browser control/.test(stillPaused.text)) throw new Error(`restarted watcher did not preserve pause:\n${stillPaused.text}`);
+  await endTurn(stillPaused.turnId);
+  step('worker stopped and restarted: same session and cursor, watcher resumed, pause still enforced');
 }
 
 await run('joy-browser smoke test — Chromium', main);

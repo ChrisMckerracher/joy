@@ -5,7 +5,7 @@
 // Three rules carry the safety of the whole extension:
 //
 //  1. ONLY THE AGENT'S OWN TEXT RUNS. A tag is honoured in a daemon-written
-//     record whose role is not `user` and whose event is non-thinking text.
+//     record whose role is `agent` and whose event is non-thinking text.
 //     Prompts (`turn.queued`), mirrored user records and legacy plain payloads
 //     never run — otherwise a page could print a tag into a result, the result
 //     would be queued as a prompt, and the extension would execute its own
@@ -22,7 +22,7 @@ import { extractBrowserTags, describeResult, browserMessage } from './tags.js';
 export function agentTextOf(event, key) {
   if (!event?.content || event.kind === 'turn.queued') return null;
   const p = openPayload(event.content.ciphertext, key);
-  if (!p || p.t !== 'record' || p.record.role === 'user') return null;
+  if (!p || p.t !== 'record' || p.record?.role !== 'agent') return null;
   const ev = p.record.content?.data?.ev;
   return ev && ev.t === 'text' && typeof ev.text === 'string' && !ev.thinking ? ev.text : null;
 }
@@ -34,15 +34,19 @@ export class Watcher {
    *  once and the outcome when it lands. */
   constructor({ relay, store, execute, remember = null, onEvents = null, log = () => {} }) {
     this.relay = relay; this.store = store; this.execute = execute; this.remember = remember; this.onEvents = onEvents; this.log = log;
-    this.running = null; this.again = false;
+    this.running = null; this.again = false; this.stopped = false;
   }
+
+  stop() { this.stopped = true; this.again = false; }
+  note(text) { try { Promise.resolve(this.log(text)).catch(() => {}); } catch { /* diagnostic only */ } }
 
   /** Pokes and alarms overlap; polls must not. A request that arrives while a
    *  poll runs asks for exactly one more after it. */
   poll() {
+    if (this.stopped) return Promise.resolve();
     if (this.running) { this.again = true; return this.running; }
     this.running = (async () => {
-      try { do { this.again = false; await this.#once(); } while (this.again); }
+      try { do { this.again = false; await this.#once(); } while (this.again && !this.stopped); }
       finally { this.running = null; }
     })();
     return this.running;
@@ -52,34 +56,48 @@ export class Watcher {
     const state = await this.store.load();
     if (!state?.sessionId) return;
     const { sessionId, key } = state;
+    const pending = state.pendingResult;
+    if (pending && !this.stopped) {
+      await this.relay.sendCiphertext(sessionId, pending.ciphertext, pending.id);
+      if (this.stopped || await this.store.clearResult?.(pending.id, state) === false) return;
+    }
     let cursor = Number(state.cursor) || 0;
-    for (;;) {
+    while (!this.stopped) {
       const page = await this.relay.events(sessionId, cursor, 200);
-      const events = page?.messages ?? [];
-      if (!events.length) return;
-      try { this.onEvents?.(events.filter((e) => Number(e.seq) > cursor), key); } catch { /* a view must never stop the work */ }
+      if (this.stopped) return;
+      const raw = page?.messages ?? [];
+      if (!raw.length) return;
+      if (raw.some((e) => !Number.isSafeInteger(Number(e?.seq)) || Number(e.seq) < 1)) throw new Error('relay returned an invalid event sequence');
+      const events = raw.filter((e) => Number(e.seq) > cursor).sort((a, b) => Number(a.seq) - Number(b.seq));
+      if (!events.length) throw new Error('relay event page did not advance');
+      try { await this.onEvents?.(events, key); } catch { /* a view must never stop the work */ }
       for (const e of events) {
+        if (this.stopped) return;
         const seq = Number(e.seq);
         if (!(seq > cursor)) continue;
         cursor = seq;
-        await this.store.saveCursor(cursor); // rule 3: before anything runs
+        if (await this.store.saveCursor(cursor, state) === false || this.stopped) return; // claim only the still-linked session
         const tags = extractBrowserTags(agentTextOf(e, key) ?? '');
         if (!tags.length) continue;
         const results = [];
         for (const tag of tags) {
+          if (this.stopped) return;
           try {
             if (tag.kind === 'remember') {
-              this.log(`asked to remember "${tag.attrs.name ?? 'untitled script'}"`);
+              this.note(`asked to remember "${tag.attrs.name ?? 'untitled script'}"`);
               results.push(this.remember ? await this.remember(tag) : { note: 'this browser cannot save scripts' });
             } else {
-              this.log(`running ${tag.attrs.url ? `on ${tag.attrs.url}` : tag.attrs.tab ? `in tab ${tag.attrs.tab}` : 'in the active tab'} (${tag.code.length} chars)`);
+              this.note(`running ${tag.attrs.url ? `on ${tag.attrs.url}` : tag.attrs.tab ? `in tab ${tag.attrs.tab}` : 'in the active tab'} (${tag.code.length} chars)`);
               results.push(await this.execute(tag));
             }
           } catch (err) { results.push({ tab: null, error: err?.message ?? String(err) }); }
         }
         const body = results.map((r, i) => describeResult(r, i, results.length)).join('\n\n');
-        await this.relay.sendCiphertext(sessionId, sealText(browserMessage(body), key));
-        this.log(`answered with ${results.length} result${results.length === 1 ? '' : 's'}${results.some((r) => r.error) ? ' (with errors)' : ''}`);
+        const result = { id: crypto.randomUUID(), ciphertext: sealText(browserMessage(body), key) };
+        if (this.stopped || await this.store.saveResult?.(result, state) === false) return;
+        await this.relay.sendCiphertext(sessionId, result.ciphertext, result.id);
+        await this.store.clearResult?.(result.id, state);
+        this.note(`answered with ${results.length} result${results.length === 1 ? '' : 's'}${results.some((r) => r.error) ? ' (with errors)' : ''}`);
       }
     }
   }

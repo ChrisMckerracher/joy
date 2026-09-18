@@ -15,7 +15,8 @@ function browserRow(seq, body) {
 }
 
 export function rowOf(event, key) {
-  const seq = Number(event.seq);
+  const seq = Number(event?.seq);
+  if (!Number.isSafeInteger(seq) || seq < 1) return null;
   // The relay's own lifecycle events are the authority on whether a turn is
   // running: an adapter's turn-end record can be missing, a terminal never is.
   if (event?.kind === 'turn.started') return { seq, role: 'turn', working: true };
@@ -28,6 +29,7 @@ export function rowOf(event, key) {
     return ours !== null ? browserRow(seq, ours) : { seq, role: 'user', text: p.text };
   }
   const rec = p.record;
+  if (!rec || typeof rec !== 'object') return null;
   if (rec.role === 'user') {
     const text = typeof rec.content?.text === 'string' ? rec.content.text : null;
     if (text === null) return null;
@@ -49,7 +51,7 @@ export function rowOf(event, key) {
 /** Events → { rows, working }. `turn` rows steer `working` and are not shown. */
 export function foldEvents(events, key, working = false) {
   const rows = [];
-  for (const e of events ?? []) {
+  for (const e of [...(events ?? [])].sort((a, b) => Number(a?.seq) - Number(b?.seq))) {
     const r = rowOf(e, key);
     if (!r) continue;
     if (r.role === 'turn') { working = r.working; continue; }

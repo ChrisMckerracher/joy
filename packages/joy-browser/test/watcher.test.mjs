@@ -135,3 +135,58 @@ test('the chat sees new events before anything in them runs, and only once', asy
   assert.deepEqual(seen, [1, 2]);
   assert.deepEqual(order.slice(0, 2), ['seen', 'ran']);
 });
+
+test('unordered pages execute each script in sequence without skipping one', async () => {
+  const r = rig([agentText(3, TAG('third')), agentText(1, TAG('first')), agentText(2, TAG('second'))]);
+  await r.w.poll();
+  assert.deepEqual(r.ran, ['first', 'second', 'third']);
+  assert.deepEqual(r.saved, [1, 2, 3]);
+});
+
+test('nonadvancing or invalid pages fail instead of spinning or losing the cursor', async () => {
+  for (const events of [[{ seq: 0 }], [{ seq: 'bad' }], [{ seq: 1 }]]) {
+    const w = new Watcher({ relay: { events: async () => ({ messages: events }) }, store: { load: async () => ({ sessionId: 's', cursor: 1 }), saveCursor: () => assert.fail('no cursor write') } });
+    await assert.rejects(w.poll(), /invalid event sequence|did not advance/);
+  }
+});
+
+test('stopping an in-flight poll prevents its cursor write and script execution', async () => {
+  let deliver; const page = new Promise((r) => { deliver = r; });
+  const r = rig([]); r.w.relay.events = () => page;
+  const poll = r.w.poll(); await Promise.resolve();
+  r.w.stop(); deliver({ messages: [agentText(1, TAG('old session'))] });
+  await poll; await r.w.poll();
+  assert.deepEqual(r.saved, []); assert.deepEqual(r.ran, []);
+});
+
+test('a lost cursor claim prevents execution, even when a relink races storage', async () => {
+  const r = rig([agentText(1, TAG('old session'))]);
+  r.w.store.saveCursor = async () => false;
+  await r.w.poll(); assert.deepEqual(r.ran, []);
+});
+
+test('rejected async view and log callbacks do not interrupt execution', async () => {
+  const r = rig([agentText(1, TAG('return 1'))]);
+  r.w.onEvents = async () => { throw Error('closed view'); };
+  r.w.log = async () => { throw Error('full storage'); };
+  await r.w.poll(); assert.equal(r.sent.length, 1);
+});
+
+test('an undelivered result survives restart, with the same intent and no second execution', async () => {
+  const r = rig([agentText(1, TAG('click once'))]);
+  r.w.store.saveResult = async (p) => { r.state.pendingResult = p; };
+  r.w.store.clearResult = async () => { r.state.pendingResult = null; };
+  const attempts = [];
+  r.w.relay.sendCiphertext = async (_id, ct, intent) => { attempts.push({ ct, intent }); if (attempts.length === 1) throw Error('reply lost'); };
+  await assert.rejects(r.w.poll(), /reply lost/);
+  const restarted = new Watcher({ relay: r.w.relay, store: r.w.store, execute: () => assert.fail('replayed a script') });
+  await restarted.poll();
+  assert.deepEqual(attempts[0], attempts[1]); assert.ok(attempts[0].intent);
+  assert.deepEqual(r.ran, ['click once']); assert.equal(r.state.pendingResult, null);
+});
+
+test('malformed or non-agent records never execute', () => {
+  for (const record of [null, {}, { role: 'tool', content: { data: { ev: { t: 'text', text: TAG('bad') } } } }]) {
+    assert.equal(agentTextOf({ kind: 'output', content: { ciphertext: sealV2Json({ v: 1, t: 'record', record }, key) } }, key), null);
+  }
+});

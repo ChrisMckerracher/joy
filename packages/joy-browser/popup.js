@@ -3,19 +3,25 @@
 // `status`, so it is always true to what is stored.
 const api = globalThis.browser ?? globalThis.chrome;
 const app = document.getElementById('app');
-const ask = async (type, extra = {}) => { const r = await api.runtime.sendMessage({ type, ...extra }); if (r?.error) throw new Error(r.error); return r; };
+const ask = async (type, extra = {}) => { const r = await api.runtime.sendMessage({ type, ...extra }); if (!r || r.error) throw new Error(r?.error ?? 'The extension did not respond. Try again.'); return r; };
 const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); for (const k of kids) if (k != null) n.append(k); return n; };
 
 let page = 'main'; // main | session | excluded | scripts
 let flash = null;  // { bad, text } shown once at the top
 
+let renderId = 0; let refresh = null;
 async function render() {
+  const id = ++renderId; clearTimeout(refresh);
+  try {
   const st = await ask('status');
+  if (id !== renderId) return;
+  if (st.starting) refresh = setTimeout(() => render(), 750);
   app.replaceChildren();
   if (flash) { app.append(el('p', { className: flash.bad ? 'err' : 'ok', textContent: flash.text })); flash = null; }
   if (st.stage === 'pair') return renderPair(st);
-  if (st.stage === 'machine') return renderMachine(st);
+  if (st.stage === 'machine') return await renderMachine(st);
   return ({ main: renderMain, session: renderSession, excluded: renderExcluded, scripts: renderScripts })[page](st);
+  } catch (e) { if (id === renderId) app.replaceChildren(el('p', { className: 'err', textContent: e.message }), Object.assign(el('button', { textContent: 'Retry' }), { onclick: () => render() })); }
 }
 const go = (p) => { page = p; render(); };
 const fail = (e) => { flash = { bad: true, text: e.message }; render(); };
@@ -42,13 +48,13 @@ function renderPair(st) {
 async function renderMachine(st) {
   app.append(el('h1', { textContent: 'Where should your session run?' }), el('p', { textContent: `Paired with ${st.relayUrl}. A headless session starts on the machine you pick and stays linked to this browser.` }));
   const select = el('select'); const folder = el('input', { type: 'text', value: st.defaultFolder });
-  const start = el('button', { textContent: 'Start my session' });
+  const start = el('button', { textContent: 'Start my session', disabled: true });
   app.append(el('label', {}, 'Machine', select), el('label', {}, 'Folder on that machine (created if missing)', folder), start, clearButton('Start over'));
   let machines = [];
-  try { machines = (await ask('machines')).machines; } catch (e) { return fail(e); }
+  try { machines = (await ask('machines')).machines; } catch (e) { app.append(el('p', { className: 'err', textContent: e.message }), Object.assign(el('button', { textContent: 'Retry' }), { onclick: () => render() })); return; }
   if (!machines.length) { select.replaceWith(el('p', { className: 'err', textContent: 'This account has no machines yet. Install the joy daemon on one and pair it, then come back.' })); start.disabled = true; return; }
   for (const m of machines) select.append(el('option', { value: m.id, textContent: `${m.name}${m.online ? '' : ' (offline)'}`, disabled: !m.online }));
-  const firstOnline = machines.find((m) => m.online); if (firstOnline) select.value = firstOnline.id; else start.disabled = true;
+  const firstOnline = machines.find((m) => m.online); if (firstOnline) { select.value = firstOnline.id; start.disabled = false; } else start.disabled = true;
   start.onclick = async () => {
     busy(start, 'Starting… this can take a minute');
     const m = machines.find((x) => x.id === select.value);
@@ -60,7 +66,7 @@ async function renderMachine(st) {
 function renderMain(st) {
   const s = st.linked;
   const pause = el('button', { className: st.paused ? '' : 'quiet', textContent: st.paused ? 'Resume' : 'Pause' });
-  pause.onclick = async () => { await ask('pause', { paused: !st.paused }); render(); };
+  pause.onclick = async () => { try { await ask('pause', { paused: !st.paused }); render(); } catch (e) { fail(e); } };
   app.append(el('div', { className: 'row' }, el('h1', { textContent: 'Joy Browser' }), pause));
   if (st.starting) app.append(el('p', { textContent: 'Starting your session…' }));
   else if (s) app.append(el('div', { className: 'card' }, el('div', { className: `t ${st.paused ? '' : 'ok'}`, textContent: s.title ?? `session ${s.localId}` }), el('div', { className: 's', textContent: `${s.localId} · ${st.machineName ?? '?'} · ${st.cwd ?? ''}` })));
@@ -69,6 +75,7 @@ function renderMain(st) {
     again.onclick = async () => { busy(again, 'Starting…'); try { await ask('newSession'); render(); } catch (e) { fail(e); } };
     app.append(el('p', { className: 'err', textContent: st.linkError ?? 'No session is linked.' }), again);
   }
+  if (s && st.linkError) app.append(el('p', { className: 'err', textContent: st.linkError }));
   if (st.paused) app.append(el('p', { textContent: 'Paused: the agent cannot run anything in this browser, and saved scripts do not run.' }));
   const pending = st.scripts.filter((x) => !x.approved).length;
   const nav = (label, target, note) => { const b = el('button', { className: 'nav' }, el('span', { textContent: label }), el('span', { className: 's', textContent: note })); b.onclick = () => go(target); return b; };
@@ -97,7 +104,7 @@ function renderExcluded(st) {
   const submit = async () => { try { await ask('exclude:add', { pattern: input.value }); render(); } catch (e) { fail(e); } };
   add.onclick = submit; input.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
   const list = el('ul');
-  for (const p of st.excluded) { const rm = el('button', { className: 'quiet sm', textContent: 'Remove' }); rm.onclick = async () => { await ask('exclude:remove', { pattern: p }); render(); }; list.append(el('li', { className: 'row' }, el('code', { textContent: p }), rm)); }
+  for (const p of st.excluded) { const rm = el('button', { className: 'quiet sm', textContent: 'Remove' }); rm.onclick = async () => { try { await ask('exclude:remove', { pattern: p }); render(); } catch (e) { fail(e); } }; list.append(el('li', { className: 'row' }, el('code', { textContent: p }), rm)); }
   app.append(header('Excluded sites', true),
     el('p', { textContent: 'On these sites there is no page button, the agent cannot run scripts, saved scripts do not run, and their tabs are left out of what the agent is told. A site covers its subdomains; add a path to cover only part of one.' }),
     el('div', { className: 'row' }, input, add), st.excluded.length ? list : el('p', { textContent: 'Nothing is excluded yet. “Hide on this site” in the chat panel adds the site you are on.' }));
@@ -108,7 +115,7 @@ function renderScripts(st) {
   if (!st.scripts.length) return void app.append(el('p', { textContent: 'None yet. Ask your session to remember a script for a site.' }));
   const list = el('ul');
   for (const s of st.scripts) {
-    const act = async (patch) => { await ask('scripts:set', { id: s.id, ...patch }); render(); };
+    const act = async (patch) => { try { await ask('scripts:set', { id: s.id, revision: s.revision, ...patch }); render(); } catch (e) { fail(e); } };
     const main = s.approved ? Object.assign(el('button', { className: s.enabled ? 'sm' : 'quiet sm', textContent: s.enabled ? 'On' : 'Off' }), { onclick: () => act({ enabled: !s.enabled }) }) : Object.assign(el('button', { className: 'sm', textContent: 'Approve' }), { onclick: () => act({ approved: true, enabled: true }) });
     const del = Object.assign(el('button', { className: 'quiet sm', textContent: s.approved ? 'Delete' : 'Reject' }), { onclick: () => act({ remove: true }) });
     list.append(el('li', {}, el('div', { className: 'row' }, el('div', { className: 't', textContent: s.name }), el('div', { className: 'btns' }, main, del)),
@@ -120,9 +127,9 @@ function renderScripts(st) {
 
 function clearButton(label) {
   const b = el('button', { className: 'quiet danger', textContent: label });
-  b.onclick = async () => { if (label === 'Clear everything' && !confirm('Forget the backup code, the linked session, excluded sites and saved scripts?')) return; await ask('clear'); page = 'main'; render(); };
+  b.onclick = async () => { if (label === 'Clear everything' && !confirm('Forget the backup code, the linked session, excluded sites and saved scripts?')) return; try { await ask('clear'); page = 'main'; render(); } catch (e) { fail(e); } };
   return b;
 }
 
-api.storage.onChanged.addListener((changes) => { if (page === 'main' && (changes.log || changes.linked || changes.linkError || changes.scripts)) render(); });
+api.storage.onChanged.addListener((changes) => { if (page === 'main' && (changes.log || changes.linked || changes.linkError || changes.relayError || changes.scripts)) render(); });
 render().catch((e) => { app.replaceChildren(el('p', { className: 'err', textContent: e.message })); });

@@ -89,7 +89,9 @@ async function main() {
   await S('POST', '/window', { handle: popupWin });
   await S('POST', '/refresh');
   await until('the waiting script to be flagged', async () => (await popupText()).includes('1 waiting for you'));
-  await press('Saved scripts'); await until('the script', async () => (await popupText()).includes('Free pricing'));
+  await press('Saved scripts');
+  // Not "the text Free pricing": the main page's log has that too, before the scripts page has drawn.
+  await until('the scripts page', () => js(`return document.querySelector('h1')?.textContent === 'Saved scripts' && [...document.querySelectorAll('button')].some((b) => b.textContent === 'Approve')`));
   await press('Approve');
   await until('the script to be on', () => js(`return [...document.querySelectorAll('button')].some((b) => b.textContent === 'On')`));
   await S('POST', '/window', { handle: pageWin });

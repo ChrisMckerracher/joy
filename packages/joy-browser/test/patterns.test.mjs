@@ -44,3 +44,16 @@ test('matchesAny over a list, including an empty or missing one', () => {
   assert.equal(matchesAny('https://a.test/', []), false);
   assert.equal(matchesAny('https://a.test/', undefined), false);
 });
+
+test('case-sensitive paths and trailing-dot hosts cannot evade an exclusion', () => {
+  assert.equal(normalizePattern('HTTPS://Example.COM/Account/*'), 'example.com/Account/*');
+  assert.equal(matchesPattern('https://example.com/Account/cards', 'Example.com/Account/*'), true);
+  assert.equal(matchesPattern('https://example.com/account/cards', 'Example.com/Account/*'), false);
+  assert.equal(matchesPattern('https://example.com./Account/cards', 'example.com'), true);
+});
+
+test('invalid ports are rejected and padded ports are canonicalized', () => {
+  assert.equal(normalizePattern('localhost:65536'), null);
+  assert.equal(normalizePattern('localhost:0'), null);
+  assert.equal(matchesPattern('http://localhost:3000', 'localhost:03000'), true);
+});

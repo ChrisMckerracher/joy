@@ -90,14 +90,14 @@ export class RelayClient {
   eventsBefore(id, before, limit = 80) { return this.call('GET', `/sessions/${encodeURIComponent(id)}/events?before=${before}&limit=${limit}`); }
   listMachines() { return this.call('GET', '/machines'); }
   /** Ask a machine's daemon to start a session: the spawn spec rides sealed (or plain) to it. */
-  createSession(machineId, spawnSpecWire) {
-    return this.call('POST', '/sessions', { mode: 'spawn', daemonId: machineId, creationIntentId: crypto.randomUUID(), spawnSpec: spawnSpecWire });
+  createSession(machineId, spawnSpecWire, creationIntentId = crypto.randomUUID()) {
+    return this.call('POST', '/sessions', { mode: 'spawn', daemonId: machineId, creationIntentId, spawnSpec: spawnSpecWire });
   }
   /** Re-queue a spawn that failed for a missing folder, opting into creating it. */
   retrySpawn(id) { return this.call('POST', `/sessions/${encodeURIComponent(id)}/spawn/retry`, { createDir: true }); }
   /** The durable queue: a sealed prompt in, { messageId, turnId, seq } out. */
-  sendCiphertext(sessionId, ciphertext) {
-    return this.call('POST', `/sessions/${encodeURIComponent(sessionId)}/messages`, { ciphertext, clientIntentId: crypto.randomUUID() });
+  sendCiphertext(sessionId, ciphertext, clientIntentId = crypto.randomUUID()) {
+    return this.call('POST', `/sessions/${encodeURIComponent(sessionId)}/messages`, { ciphertext, clientIntentId });
   }
 
   /** The doorbell: a long-lived SSE stream. `onPoke(sessionId)` says "something

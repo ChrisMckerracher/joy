@@ -19,6 +19,7 @@ import { browserMessage, splitMatch } from './src/tags.js';
 import { matchesAny, normalizePattern } from './src/patterns.js';
 import { foldEvents } from './src/conversation.js';
 import { runInTab, tabInfo, withTimeout } from './src/runner.js';
+import { serial, sameLink, boundedRelay } from './src/state.js';
 
 const ALARM = 'joy-browser-poll';
 const LOAD_TIMEOUT_MS = 30_000;
@@ -29,29 +30,52 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // storage.local — the background can be stopped at any moment, so nothing that
 // matters lives only in memory:
 //   setup    { relayUrl, secret (b64), machineId, machineName, cwd }
-//   linked   { sessionId, localId, title, envelope } | null     cursor  number
+//   linked   { sessionId, token, localId, title, envelope } | null     cursor  number
+//   pendingSpawn { id, machineId, wire, relayId?, retried? } | null
+//   pendingResult { id, ciphertext } | null   — delivery retries never rerun code
 //   paused   boolean          excluded [pattern]          fab { x, y }
 //   scripts  [{ id, name, match[], code, enabled, approved, createdAt }]
 //   linkError string | null   log [line]
 const get = (keys) => api.storage.local.get(keys);
-const set = (obj) => api.storage.local.set(obj);
+const writes = serial();
+let epoch = 0;
+const current = (gen) => { if (gen !== epoch) throw new Error('the browser connection changed; try again'); };
+const set = (obj, gen = epoch) => writes(() => { current(gen); return api.storage.local.set(obj); });
+const change = (keys, fn, gen = epoch) => writes(async () => {
+  current(gen); const s = await get(keys); current(gen);
+  const patch = fn(s); if (patch) await api.storage.local.set(patch);
+  return patch;
+});
 
-async function log(line) {
-  const { log: lines = [] } = await get('log');
-  lines.push(`${new Date().toLocaleTimeString()}  ${line}`);
-  await set({ log: lines.slice(-80) });
+async function log(line, gen = epoch) {
+  await change('log', ({ log: lines = [] }) => ({ log: [...lines, `${new Date().toLocaleTimeString()}  ${line}`].slice(-80) }), gen);
 }
 
+async function report(e, gen = epoch) {
+  if (gen !== epoch) return;
+  const message = e?.message ?? String(e);
+  try { await set({ relayError: message }, gen); await log(message, gen); current(gen); post({ type: 'error', message }); } catch { /* storage or port unavailable */ }
+}
+const background = (job) => { const gen = epoch; void Promise.resolve().then(job).catch((e) => report(e, gen)); };
+
 let client = null; // { relay, contentSecret } — rebuilt from storage on demand
+let clientJob = null;
 async function ensureClient() {
   if (client) return client;
-  const { setup } = await get('setup');
-  if (!setup?.relayUrl || !setup?.secret) return null;
-  const accountSecret = unb64(setup.secret);
-  const perimeterKey = relayPerimeterKey(accountSecret);
-  const renew = () => loginWithSecret(setup.relayUrl, accountSecret, { perimeterKey });
-  client = { relay: new RelayClient({ relayUrl: setup.relayUrl, token: await renew(), perimeterKey, renew }), contentSecret: contentKeyPair(accountSecret).secretKey };
-  return client;
+  if (clientJob) return clientJob;
+  const gen = epoch;
+  const job = (async () => {
+    const { setup } = await get('setup');
+    if (!setup?.relayUrl || !setup?.secret) return null;
+    const accountSecret = unb64(setup.secret);
+    const perimeterKey = relayPerimeterKey(accountSecret);
+    const renew = () => withTimeout(loginWithSecret(setup.relayUrl, accountSecret, { perimeterKey }), 20_000, 'relay login');
+    const token = await renew(); current(gen);
+    client = { relay: boundedRelay(new RelayClient({ relayUrl: setup.relayUrl, token, perimeterKey, renew }), withTimeout), contentSecret: contentKeyPair(accountSecret).secretKey };
+    return client;
+  })();
+  clientJob = job;
+  try { return await job; } finally { if (clientJob === job) clientJob = null; }
 }
 const keyOf = (linked, c) => (linked?.envelope ? openSessionKeyEnvelope(linked.envelope, c.contentSecret) : null);
 
@@ -76,19 +100,26 @@ async function activeTab() {
   }
   return tab ?? null;
 }
-function waitForLoad(tabId) {
-  return withTimeout(new Promise((resolve) => {
-    const done = (id, info) => { if (id === tabId && info.status === 'complete') { api.tabs.onUpdated.removeListener(done); resolve(); } };
+async function waitForLoad(tabId) {
+  let done; let removed;
+  try { return await withTimeout(new Promise((resolve, reject) => {
+    done = (id, info) => { if (id === tabId && info.status === 'complete') resolve(); };
+    removed = (id) => { if (id === tabId) reject(new Error('the tab was closed before it loaded')); };
     api.tabs.onUpdated.addListener(done);
-    api.tabs.get(tabId).then((t) => { if (t.status === 'complete') { api.tabs.onUpdated.removeListener(done); resolve(); } }).catch(() => {});
-  }), LOAD_TIMEOUT_MS, 'page load');
+    api.tabs.onRemoved.addListener(removed);
+    api.tabs.get(tabId).then((t) => { if (t.status === 'complete') resolve(); }, reject);
+  }), LOAD_TIMEOUT_MS, 'page load'); }
+  finally { api.tabs.onUpdated.removeListener(done); api.tabs.onRemoved.removeListener(removed); }
 }
 
 async function execute(tag) {
+  const gen = epoch;
   const { paused, excluded } = await brakes();
   if (paused) return { tab: null, error: PAUSED };
   if (tag.attrs.tab === 'list') {
-    const tabs = (await api.tabs.query({})).filter((t) => t.url && !matchesAny(t.url, excluded));
+    const all = await api.tabs.query({}); const b = await brakes(); current(gen);
+    if (b.paused) return { tab: null, error: PAUSED };
+    const tabs = all.filter((t) => t.url && !matchesAny(t.url, b.excluded));
     return { tab: null, value: 'the open tabs follow (tabs on excluded sites are not listed)', tabs: tabs.slice(0, 40).map((t) => ({ ...tabInfo(t), active: t.active })) };
   }
   let tab;
@@ -107,9 +138,17 @@ async function execute(tag) {
   }
   // Checked on the page the script would actually touch — a redirect can land
   // an allowed URL on an excluded site.
-  if (matchesAny(tab.url, excluded)) return { tab: null, error: excludedError(new URL(tab.url).host) };
+  const latest = await brakes(); current(gen);
+  if (latest.paused) return { tab: null, error: PAUSED };
+  if (matchesAny(tab.url, latest.excluded)) return { tab: null, error: excludedError(new URL(tab.url).host) };
   if (!tag.code.trim()) return { tab: tabInfo(tab), value: tag.attrs.url ? 'opened and loaded' : 'nothing to run (empty script)' };
-  return queued(() => runInTab(tab, tag.code));
+  return queued(async () => {
+    current(gen);
+    const now = await api.tabs.get(tab.id); const b = await brakes(); current(gen);
+    if (b.paused) return { tab: null, error: PAUSED };
+    if (matchesAny(now.url, b.excluded)) return { tab: null, error: excludedError(now.url) };
+    return runInTab(now, tag.code);
+  });
 }
 
 // ── saved scripts ────────────────────────────────────────────────────────────
@@ -118,16 +157,19 @@ async function remember(tag) {
   const match = [...new Set(splitMatch(tag.attrs.match).map(normalizePattern).filter(Boolean))];
   if (!match.length) return { note: `"${name}" was NOT saved: match must name at least one site, for example match="example.com" or match="example.com/app/*".` };
   if (!tag.code.trim()) return { note: `"${name}" was NOT saved: the script is empty.` };
-  const { scripts = [] } = await get('scripts');
-  const existing = scripts.find((s) => s.name === name);
+  let existing;
   // A changed script goes back to unapproved: approval is of THIS code, on THESE sites.
-  const entry = { id: existing?.id ?? crypto.randomUUID(), name, match, code: tag.code, enabled: false, approved: false, createdAt: Date.now() };
-  await set({ scripts: [...scripts.filter((s) => s.id !== entry.id), entry] });
-  broadcastMeta();
+  await change('scripts', ({ scripts = [] }) => {
+    existing = scripts.find((s) => s.name === name);
+    const entry = { id: existing?.id ?? crypto.randomUUID(), revision: crypto.randomUUID(), name, match, code: tag.code, enabled: false, approved: false, createdAt: Date.now() };
+    return { scripts: [...scripts.filter((s) => s.id !== entry.id), entry] };
+  });
+  await broadcastMeta();
   return { note: `saved "${name}" for ${match.join(', ')}${existing ? ' (replacing the earlier version)' : ''}. It is OFF until the user approves it in the chat panel or under Settings → Saved scripts; you cannot approve it for them. Once on, it runs on every visit to those pages, except excluded sites.` };
 }
 
 async function runSavedScripts(tab) {
+  const gen = epoch;
   if (!scriptable(tab.url) || tab.url.startsWith('file:')) return;
   const { scripts = [] } = await get('scripts');
   const due = scripts.filter((s) => s.enabled && s.approved && matchesAny(tab.url, s.match));
@@ -135,56 +177,83 @@ async function runSavedScripts(tab) {
   const { paused, excluded } = await brakes();
   if (paused || matchesAny(tab.url, excluded)) return;
   for (const s of due) {
-    const r = await queued(() => runInTab(tab, s.code));
-    await log(`saved script "${s.name}" on ${new URL(tab.url).host}: ${r.error ? `error — ${String(r.error).split('\n')[0]}` : 'ok'}`);
+    const r = await queued(async () => {
+      current(gen);
+      const now = await api.tabs.get(tab.id); const b = await brakes();
+      const { scripts: latest = [] } = await get('scripts'); current(gen);
+      const approved = latest.find((x) => x.id === s.id && x.code === s.code && x.revision === s.revision && x.enabled && x.approved);
+      if (!approved || b.paused || matchesAny(now.url, b.excluded) || !matchesAny(now.url, approved.match)) return { error: 'skipped: script, page, or browser controls changed while waiting' };
+      return runInTab(now, approved.code);
+    });
+    await log(`saved script "${s.name}" on ${new URL(tab.url).host}: ${r.error ? `error — ${String(r.error).split('\n')[0]}` : 'ok'}`, gen);
   }
 }
-api.tabs.onUpdated.addListener((_id, info, tab) => { if (info.status === 'complete') void runSavedScripts(tab).catch(() => {}); });
+api.tabs.onUpdated.addListener((_id, info, tab) => { if (info.status === 'complete') background(() => runSavedScripts(tab)); });
 
 // ── the chat feed ────────────────────────────────────────────────────────────
 const ports = new Set();
 let convo = { sessionId: null, rows: new Map(), working: false, lastSeq: 0, loaded: false };
+let conversationJob = null;
 const convoRows = () => [...convo.rows.values()].sort((a, b) => a.seq - b.seq);
-const post = (msg) => { for (const p of ports) { try { p.postMessage(msg); } catch { ports.delete(p); } } };
+const post = (msg) => { for (const p of ports) { try { p.postMessage(msg); } catch { ports.delete(p); try { p.disconnect(); } catch { /* gone */ } } } };
 
 function absorb(events, key) {
-  const fresh = (events ?? []).filter((e) => Number(e.seq) > convo.lastSeq);
+  const fresh = (events ?? []).filter((e) => Number.isSafeInteger(Number(e?.seq)) && Number(e.seq) > convo.lastSeq).sort((a, b) => Number(a.seq) - Number(b.seq));
   if (!fresh.length) return [];
   const { rows, working } = foldEvents(fresh, key, convo.working);
   convo.working = working;
   convo.lastSeq = Math.max(convo.lastSeq, ...fresh.map((e) => Number(e.seq)));
   for (const r of rows) convo.rows.set(r.seq, r);
+  while (convo.rows.size > 300) convo.rows.delete(convo.rows.keys().next().value);
   return rows;
 }
 
 async function loadConversation() {
+  if (conversationJob) return conversationJob;
+  const gen = epoch;
+  const job = refreshConversation(gen);
+  conversationJob = job;
+  try { return await job; } finally { if (conversationJob === job) conversationJob = null; }
+}
+async function refreshConversation(gen) {
   const { linked } = await get('linked');
   const c = linked ? await ensureClient() : null;
+  current(gen);
   if (!linked || !c) { convo = { sessionId: null, rows: new Map(), working: false, lastSeq: 0, loaded: false }; return; }
-  if (convo.sessionId === linked.sessionId && convo.loaded) return;
-  convo = { sessionId: linked.sessionId, rows: new Map(), working: false, lastSeq: 0, loaded: false };
+  const initial = convo.sessionId !== linked.sessionId || !convo.loaded;
+  if (initial) convo = { sessionId: linked.sessionId, rows: new Map(), working: false, lastSeq: 0, loaded: false, pending: [] };
+  const target = convo;
   const st = await c.relay.sessionState(linked.sessionId);
-  const page = await c.relay.eventsBefore(linked.sessionId, Number(st.headSeq) + 1, 120);
+  const page = initial ? await c.relay.eventsBefore(linked.sessionId, Number(st.headSeq) + 1, 120) : await c.relay.events(linked.sessionId, target.lastSeq, 200);
+  current(gen);
+  if (convo !== target || !sameLink(linked, (await get('linked')).linked)) return;
   absorb(page?.messages ?? [], keyOf(linked, c));
   // The relay is the authority on whether a turn is open right now; the fold
   // only knows what the last page of history happened to contain.
   const exec = st.execution?.state ?? st.execution ?? 'idle';
-  convo.working = exec !== 'idle';
+  // A newer terminal can arrive while the state/history requests are in flight.
+  if (convo.lastSeq <= Number(st.headSeq)) convo.working = exec !== 'idle';
+  if (initial) absorb(target.pending ?? [], keyOf(linked, c));
   convo.loaded = true;
+  convo.pending = [];
+  if (ports.size) post({ type: 'state', sessionId: linked.sessionId, rows: convoRows(), working: convo.working, ...(await metaView()) });
 }
 
 async function metaView() {
-  const { linked, paused = false, scripts = [], linkError = null, setup } = await get(['linked', 'paused', 'scripts', 'linkError', 'setup']);
-  return { session: linked ? { localId: linked.localId, title: linked.title ?? null, machine: setup?.machineName ?? null } : null, paused, linkError, pending: scripts.filter((s) => !s.approved).map(({ id, name, match, code }) => ({ id, name, match, code })) };
+  const { linked, paused = false, scripts = [], linkError = null, relayError = null, setup } = await get(['linked', 'paused', 'scripts', 'linkError', 'relayError', 'setup']);
+  return { session: linked ? { sessionId: linked.sessionId, localId: linked.localId, title: linked.title ?? null, machine: setup?.machineName ?? null } : null, paused, linkError: linkError ?? relayError, pending: scripts.filter((s) => !s.approved).map(({ id, revision, name, match, code }) => ({ id, revision, name, match, code })) };
 }
 async function broadcastMeta() { if (ports.size) post({ type: 'meta', ...(await metaView()) }); }
 
-async function sendAsUser(text) {
+async function sendAsUser(text, id) {
+  const gen = epoch;
   const { linked } = await get('linked');
   const c = await ensureClient();
   if (!linked || !c) throw new Error('no session is linked');
-  await c.relay.sendCiphertext(linked.sessionId, sealText(text, keyOf(linked, c)));
-  void watcher?.poll().catch(() => {});
+  if (!text.trim()) throw new Error('enter a message');
+  current(gen);
+  await c.relay.sendCiphertext(linked.sessionId, sealText(text, keyOf(linked, c)), id);
+  background(() => ensureWatching());
 }
 
 api.runtime.onConnect.addListener((port) => {
@@ -194,140 +263,188 @@ api.runtime.onConnect.addListener((port) => {
   port.onMessage.addListener(async (m) => {
     try {
       if (m.type === 'hello') {
-        await ensureWatching(); await loadConversation();
+        port.postMessage({ type: 'pong' });
+        await loadConversation(); background(() => ensureWatching());
         port.postMessage({ type: 'state', rows: convoRows(), working: convo.working, ...(await metaView()) });
-      } else if (m.type === 'send') { await sendAsUser(String(m.text)); }
-      else if (m.type === 'ping') { void watcher?.poll().catch(() => {}); }
-      else if (m.type === 'script') { await handlers['scripts:set']({ id: m.id, approved: m.approve, enabled: m.approve, remove: !m.approve }); }
+      } else if (m.type === 'send') { await sendAsUser(String(m.text ?? ''), m.id); port.postMessage({ type: 'sent', id: m.id }); }
+      else if (m.type === 'ping') { port.postMessage({ type: 'pong' }); background(() => ensureWatching()); }
+      else if (m.type === 'script') { await handlers['scripts:set']({ id: m.id, revision: m.revision, approved: m.approve, enabled: m.approve, remove: !m.approve }); }
       else if (m.type === 'pause') { await handlers.pause({ paused: !!m.paused }); }
       else if (m.type === 'hideHere') { await handlers['exclude:add']({ pattern: m.host }); }
-    } catch (e) { try { port.postMessage({ type: 'error', message: e?.message ?? String(e) }); } catch { /* gone */ } }
+    } catch (e) { try { port.postMessage({ type: 'error', id: m?.type === 'send' ? m.id : null, message: e?.message ?? String(e) }); } catch { /* gone */ } }
   });
 });
 
 // ── watching the linked session ──────────────────────────────────────────────
 const store = {
   async load() {
-    const { linked, cursor } = await get(['linked', 'cursor']);
+    const { linked, cursor, pendingResult } = await get(['linked', 'cursor', 'pendingResult']);
     const c = linked ? await ensureClient() : null;
-    return linked && c ? { sessionId: linked.sessionId, cursor, key: keyOf(linked, c) } : null;
+    return linked && c ? { ...linked, cursor, pendingResult, key: keyOf(linked, c) } : null;
   },
-  saveCursor: (cursor) => set({ cursor }),
+  saveCursor: async (cursor, state) => !!await change(['linked', 'cursor'], (s) => sameLink(s.linked, state) && cursor > (Number(s.cursor) || 0) ? { cursor } : null),
+  saveResult: async (pendingResult, state) => !!await change('linked', (s) => sameLink(s.linked, state) ? { pendingResult } : null),
+  clearResult: async (id, state) => !!await change(['linked', 'pendingResult'], (s) => sameLink(s.linked, state) && s.pendingResult?.id === id ? { pendingResult: null } : null),
 };
 
 let watcher = null; let stopStream = null; let watching = null;
-function stopWatching() { stopStream?.(); stopStream = null; watcher = null; watching = null; }
+const watchQueue = serial();
+let watchJob = null;
+function stopWatching() { watcher?.stop(); stopStream?.(); stopStream = null; watcher = null; watching = null; conversationJob = null; convo = { sessionId: null, rows: new Map(), working: false, lastSeq: 0, loaded: false }; }
 async function ensureWatching() {
+  const gen = epoch;
+  if (watchJob?.gen === gen) return watchJob.promise;
+  const job = { gen, promise: null };
+  job.promise = watchQueue(async () => { current(gen); return watchOnce(gen); }).finally(() => { if (watchJob === job) watchJob = null; });
+  watchJob = job; return job.promise;
+}
+async function watchOnce(gen) {
   const { linked } = await get('linked');
-  const c = linked ? await ensureClient().catch(async (e) => { await log(`cannot reach the relay: ${e.message}`); return null; }) : null;
+  const c = linked ? await ensureClient() : null;
+  current(gen);
+  if (linked && !sameLink(linked, (await get('linked')).linked)) return;
   if (!linked || !c) return stopWatching();
   if (watching !== linked.sessionId) { stopWatching(); watching = linked.sessionId; }
   if (!watcher) {
-    watcher = new Watcher({ relay: c.relay, store, execute, remember, log, onEvents: (events, key) => {
-      if (convo.sessionId !== linked.sessionId || !convo.loaded) return;
+    watcher = new Watcher({ relay: c.relay, store, execute, remember, log: (line) => log(line, gen), onEvents: (events, key) => {
+      if (gen !== epoch || convo.sessionId !== linked.sessionId) return;
+      if (!convo.loaded) { convo.pending?.push(...events); return; }
       const rows = absorb(events, key);
-      if (rows.length || ports.size) post({ type: 'rows', rows, working: convo.working });
+      if (rows.length || ports.size) post({ type: 'rows', sessionId: linked.sessionId, rows, working: convo.working });
     } });
   }
   if (!stopStream) {
     stopStream = c.relay.stream({
-      onPoke: (sessionId) => { if (sessionId === linked.sessionId) void watcher?.poll().catch((e) => log(`poll failed: ${e.message}`)); },
-      onError: () => { /* the stream reconnects itself; the alarm is the floor */ },
+      onPoke: (sessionId) => { if (gen === epoch && sessionId === linked.sessionId) background(() => ensureWatching()); },
+      onError: (e) => { if (gen === epoch) background(() => report(e, gen)); },
     });
   }
-  await watcher.poll().catch((e) => log(`poll failed: ${e.message}`));
+  await watcher.poll(); current(gen);
+  await set({ relayError: null, linkError: null }, gen);
+  if (ports.size) { await loadConversation(); await broadcastMeta(); }
 }
 
 // ── the linked session ───────────────────────────────────────────────────────
-async function link(row, { announce }) {
-  const c = await ensureClient();
+async function link(row, { announce, gen = epoch }) {
+  const c = await ensureClient(); current(gen);
   const key = openSessionKeyEnvelope(row.sessionKeyEnvelope, c.contentSecret);
   const meta = row.encryptedMetadata ? openCard(row.encryptedMetadata, key) : null;
-  const linked = { sessionId: row.sessionId, localId: row.localSessionId ?? row.sessionId.slice(0, 8), title: meta?.summary?.text ?? null, envelope: row.sessionKeyEnvelope ?? null };
-  // History is not news: start at the head, so only what the agent says from now on runs.
-  await set({ linked, cursor: Number(row.headSeq) || 0, linkError: null });
-  stopWatching(); convo.loaded = false; convo.sessionId = null;
-  await log(`linked to session ${linked.localId}${linked.title ? ` — ${linked.title}` : ''}`);
+  const linked = { sessionId: row.sessionId, token: crypto.randomUUID(), localId: row.localSessionId ?? row.sessionId.slice(0, 8), title: meta?.summary?.text ?? null, envelope: row.sessionKeyEnvelope ?? null };
+  let pendingResult = null;
   if (announce) {
     const tab = await activeTab();
     const { excluded = [] } = await get('excluded');
     const here = tab && !matchesAny(tab.url, excluded) ? `The active tab is ${tab.id} · ${tab.url} · "${tab.title}".` : 'Open a page with the url attribute when you need one.';
-    await c.relay.sendCiphertext(row.sessionId, sealText(browserMessage(`A browser is now attached to this session: the user's own, through the Joy Browser extension. You can run JavaScript in it with <joy-browser-execute> and offer to save scripts with <joy-browser-remember>, as your instructions describe. ${here} The user talks to you from a chat panel on the pages they browse. Nothing is being asked of you by this message — reply with one short line saying you are ready.`), key));
+    pendingResult = { id: crypto.randomUUID(), ciphertext: sealText(browserMessage(`A browser is now attached to this session: the user's own, through the Joy Browser extension. You can run JavaScript in it with <joy-browser-execute> and offer to save scripts with <joy-browser-remember>, as your instructions describe. ${here} The user talks to you from a chat panel on the pages they browse. Nothing is being asked of you by this message — reply with one short line saying you are ready.`), key) };
   }
+  // Use a fresh head, not the earlier list snapshot. Persist the notice with
+  // the link: a failed delivery must not make the next attempt spawn again.
+  const st = await c.relay.sessionState(row.sessionId); current(gen);
+  if (!Number.isSafeInteger(Number(st.headSeq)) || Number(st.headSeq) < 0) throw new Error('the relay returned an invalid session cursor');
+  await set({ linked, cursor: Number(st.headSeq), pendingResult, pendingSpawn: null, linkError: null, relayError: null }, gen);
+  stopWatching();
+  await log(`linked to session ${linked.localId}${linked.title ? ` — ${linked.title}` : ''}`, gen);
   await ensureWatching(); await loadConversation(); await broadcastMeta();
-  if (ports.size) post({ type: 'state', rows: convoRows(), working: convo.working, ...(await metaView()) });
 }
 
 let spawning = null;
 function startSession() {
   if (spawning) return spawning;
-  spawning = (async () => {
-    await set({ linkError: null });
+  const gen = epoch;
+  const job = (async () => {
     try {
+      await set({ linkError: null }, gen);
       const c = await ensureClient();
-      const { setup } = await get('setup');
+      const { setup, pendingSpawn } = await get(['setup', 'pendingSpawn']); current(gen);
       if (!c || !setup?.machineId) throw new Error('setup is not finished');
-      const { machines = [] } = await c.relay.listMachines();
-      const m = machines.find((x) => x.id === setup.machineId);
-      if (!m) throw new Error('that machine is no longer on this account');
-      const machineKey = openMachineKey(m.dataEncryptionKey, c.contentSecret);
-      const meta = await openMachineMetadata(m.metadata, machineKey);
-      const spec = { cwd: setup.cwd || DEFAULT_FOLDER, agent: 'claude', createDir: true, headless: true };
-      const created = await c.relay.createSession(m.id, sealSpawnSpec(spec, meta?.capabilities?.spawnSpecSealed && machineKey ? machineKey : null, m.id));
-      const relayId = created.sessionId ?? created.session?.sessionId ?? created.id;
-      await log(`asked ${setup.machineName ?? 'the machine'} to start a session in ${spec.cwd}`);
-      let row = null; let retried = false;
-      for (let i = 0; i < 180; i++) { // a fresh agent can take a while to announce itself
-        await sleep(500);
-        row = ((await c.relay.listSessions()).sessions ?? []).find((s) => s.sessionId === relayId) ?? null;
+      let pending = pendingSpawn;
+      if (!pending) {
+        const { machines = [] } = await c.relay.listMachines(); current(gen);
+        const m = machines.find((x) => x.id === setup.machineId);
+        if (!m) throw new Error('that machine is no longer on this account');
+        const machineKey = openMachineKey(m.dataEncryptionKey, c.contentSecret);
+        const meta = await openMachineMetadata(m.metadata, machineKey); current(gen);
+        const spec = { cwd: setup.cwd || DEFAULT_FOLDER, agent: 'claude', createDir: true, headless: true };
+        pending = { id: crypto.randomUUID(), machineId: m.id, wire: sealSpawnSpec(spec, meta?.capabilities?.spawnSpecSealed && machineKey ? machineKey : null, m.id) };
+        // Keep the exact intent AND encrypted payload before the first request.
+        // A worker may die after the relay accepted it but before the reply.
+        await set({ pendingSpawn: pending }, gen);
+      }
+      if (!pending.relayId) {
+        const created = await c.relay.createSession(pending.machineId, pending.wire, pending.id); current(gen);
+        const relayId = created.sessionId ?? created.session?.sessionId ?? created.id;
+        if (!relayId) throw new Error('the relay did not return a session id');
+        pending = { ...pending, relayId };
+        await set({ pendingSpawn: pending }, gen);
+        await log(`asked ${setup.machineName ?? 'the machine'} to start a session in ${setup.cwd || DEFAULT_FOLDER}`, gen);
+      }
+      let row = null;
+      const deadline = Date.now() + 90_000;
+      while (Date.now() < deadline) {
+        await sleep(500); current(gen);
+        row = ((await c.relay.listSessions()).sessions ?? []).find((s) => s.sessionId === pending.relayId) ?? null; current(gen);
         if (row?.state === 'failed') {
-          const why = (await c.relay.sessionState(relayId).catch(() => null))?.spawnFailure ?? 'spawn_failed';
-          if (String(why).startsWith('dir_missing') && !retried) { retried = true; await c.relay.retrySpawn(relayId); continue; }
+          const why = (await c.relay.sessionState(pending.relayId)).spawnFailure ?? 'spawn_failed'; current(gen);
+          if (String(why).startsWith('dir_missing') && !pending.retried) {
+            pending = { ...pending, retried: true }; await set({ pendingSpawn: pending }, gen);
+            await c.relay.retrySpawn(pending.relayId); continue;
+          }
+          await set({ pendingSpawn: null }, gen); // definitive failure: an explicit retry may create a new intent
           throw new Error(`the machine could not start the session: ${why}`);
         }
         if (row?.localSessionId && row.sessionKeyEnvelope) break;
       }
-      if (!row?.localSessionId) throw new Error('the machine has not started the session — is its daemon online?');
-      await link(row, { announce: true });
+      if (!row?.localSessionId || !row?.sessionKeyEnvelope) throw new Error('the machine has not started the session — is its daemon online? Retry to check the same session.');
+      await link(row, { announce: true, gen });
     } catch (e) {
-      await set({ linkError: e?.message ?? String(e) });
-      await log(`could not start a session: ${e?.message ?? e}`);
-      await broadcastMeta();
+      if (gen === epoch) {
+        try { await set({ linkError: e?.message ?? String(e) }, gen); await log(`could not start a session: ${e?.message ?? e}`, gen); await broadcastMeta(); } catch { /* keep the original failure */ }
+      }
       throw e;
-    } finally { spawning = null; }
+    } finally { if (spawning === job) spawning = null; }
   })();
-  return spawning;
+  spawning = job;
+  return job;
 }
 
-/** The linked session is gone for good → start a fresh one, once. A spawn that
- *  fails parks on linkError until a person presses the button. */
-async function ensureLinked() {
-  const { setup, linked, linkError } = await get(['setup', 'linked', 'linkError']);
-  if (!setup?.machineId || spawning) return;
-  if (!linked) { if (!linkError) await startSession().catch(() => {}); return; }
-  const c = await ensureClient().catch(() => null);
+/** A definitive end starts one fresh session. Transient errors remain visible;
+ *  failed spawns park until a person retries, using the persisted intent. */
+let linkedJob = null;
+function ensureLinked() {
+  if (linkedJob?.gen === epoch) return linkedJob.promise;
+  const job = { gen: epoch, promise: null };
+  job.promise = refreshLink(job.gen).finally(() => { if (linkedJob === job) linkedJob = null; });
+  linkedJob = job; return job.promise;
+}
+async function refreshLink(gen) {
+  const { setup, linked, linkError } = await get(['setup', 'linked', 'linkError']); current(gen);
+  if (!setup?.machineId || spawning || connectionJob) return;
+  if (!linked) { if (!linkError) await startSession(); return; }
+  const c = await ensureClient(); current(gen);
   if (!c) return;
   let gone = false;
   try { gone = ['archived', 'deleted', 'failed'].includes((await c.relay.sessionState(linked.sessionId)).sessionState); }
-  catch (e) { gone = e?.status === 404; }
-  if (!gone) return;
-  await log(`session ${linked.localId} has ended — starting a fresh one`);
-  await set({ linked: null, cursor: 0 }); stopWatching();
-  await startSession().catch(() => {});
+  catch (e) { if (e?.status !== 404) throw e; gone = true; }
+  current(gen);
+  if (!gone || connectionJob || !sameLink(linked, (await get('linked')).linked)) return;
+  current(gen);
+  await log(`session ${linked.localId} has ended — starting a fresh one`, gen);
+  await set({ linked: null, cursor: 0, pendingResult: null, pendingSpawn: null }, gen); stopWatching();
+  await startSession();
 }
 
-// Chrome stops an idle service worker after ~30 s, and the stream with it. The
-// alarm is the floor: at worst a tag waits one period. (Firefox's background
-// page does not sleep; there this is only the health check.)
-api.alarms.create(ALARM, { periodInMinutes: 0.5 });
-api.alarms.onAlarm.addListener((a) => { if (a.name === ALARM) void ensureLinked().then(ensureWatching).catch(() => {}); });
-api.runtime.onStartup.addListener(() => void ensureLinked().then(ensureWatching).catch(() => {}));
-api.runtime.onInstalled.addListener(() => void ensureWatching());
-void ensureWatching();
+// Chrome stops an idle worker; an alarm is the polling floor. Module startup
+// also resumes a persisted spawn, including when no browser startup event fires.
+const tick = async () => { await ensureLinked(); await ensureWatching(); };
+api.alarms.onAlarm.addListener((a) => { if (a.name === ALARM) background(tick); });
+api.runtime.onStartup.addListener(() => background(tick));
+api.runtime.onInstalled.addListener(() => background(tick));
+background(async () => { await api.alarms.create(ALARM, { periodInMinutes: 0.5 }); await tick(); });
 
 // ── requests from the popup and the page button ──────────────────────────────
 async function machinesView() {
   const c = await ensureClient();
+  if (!c) throw new Error('pair this browser first');
   const { machines = [] } = await c.relay.listMachines();
   const out = [];
   for (const m of machines) {
@@ -339,45 +456,50 @@ async function machinesView() {
 
 const handlers = {
   async status() {
-    const s = await get(['setup', 'linked', 'paused', 'excluded', 'scripts', 'linkError', 'log', 'draft']);
+    const s = await get(['setup', 'linked', 'paused', 'excluded', 'scripts', 'linkError', 'relayError', 'log', 'draft']);
     return {
       stage: !s.setup?.secret ? 'pair' : !s.setup?.machineId ? 'machine' : 'ready',
       relayUrl: s.setup?.relayUrl ?? null, machineName: s.setup?.machineName ?? null, cwd: s.setup?.cwd ?? null,
-      linked: s.linked ?? null, starting: !!spawning, linkError: s.linkError ?? null, paused: !!s.paused,
-      excluded: s.excluded ?? [], scripts: (s.scripts ?? []).map(({ id, name, match, code, enabled, approved }) => ({ id, name, match, code, enabled, approved })),
+      linked: s.linked ?? null, starting: !!spawning, linkError: s.linkError ?? s.relayError ?? null, paused: !!s.paused,
+      excluded: s.excluded ?? [], scripts: (s.scripts ?? []).map(({ id, revision, name, match, code, enabled, approved }) => ({ id, revision, name, match, code, enabled, approved })),
       log: s.log ?? [], defaultFolder: DEFAULT_FOLDER, draft: s.draft ?? null,
     };
   },
   /** Step one: prove the relay and the code, keep them, and say which machines there are. */
-  async login({ relayUrl, backupCode }) {
+  async login({ relayUrl, backupCode }, gen) {
     const { url, error } = relayAddress(relayUrl);
     if (error) throw new Error(error);
-    await set({ draft: { relayUrl: String(relayUrl ?? '').trim() } }); // so a failed try does not cost the typing
+    await set({ draft: { relayUrl: String(relayUrl ?? '').trim() } }, gen); // so a failed try does not cost the typing
     let accountSecret;
     try { accountSecret = parseBackupCode(backupCode); } catch { throw new Error('that is not a backup code — copy it from the joy app, Settings → Account'); }
     const perimeterKey = relayPerimeterKey(accountSecret);
-    const wrong = await describeRelay(url, { perimeterKey });
+    const wrong = await withTimeout(describeRelay(url, { perimeterKey }), 20_000, 'relay check'); current(gen);
     if (wrong) throw new Error(wrong);
-    try { await loginWithSecret(url, accountSecret, { perimeterKey }); }
+    try { await withTimeout(loginWithSecret(url, accountSecret, { perimeterKey }), 20_000, 'relay login'); current(gen); }
     catch (e) { throw new Error(e?.status === 401 || e?.status === 403 ? `${url} does not know this backup code — is it the relay this account lives on?` : `${url}: ${e?.message ?? e}`); }
-    client = null;
-    await set({ setup: { relayUrl: url, secret: b64(accountSecret) }, linked: null, cursor: 0, linkError: null });
-    await log(`paired with ${url}`);
+    current(gen); client = null; clientJob = null;
+    await set({ setup: { relayUrl: url, secret: b64(accountSecret) }, linked: null, cursor: 0, pendingSpawn: null, pendingResult: null, linkError: null, relayError: null }, gen);
+    await log(`paired with ${url}`, gen);
     return { machines: await machinesView() };
   },
   machines: async () => ({ machines: await machinesView() }),
   /** Step two: the machine and folder, then the session starts by itself. */
-  async start({ machineId, machineName, cwd }) {
-    const { setup } = await get('setup');
-    await set({ setup: { ...setup, machineId, machineName, cwd: (cwd ?? '').trim() || DEFAULT_FOLDER }, linked: null, cursor: 0 });
+  async start({ machineId, machineName, cwd }, gen) {
+    const { setup, pendingSpawn } = await get(['setup', 'pendingSpawn']);
+    current(gen);
+    if (!setup?.secret || !machineId) throw new Error('choose a machine after pairing');
+    const folder = (cwd ?? '').trim() || DEFAULT_FOLDER;
+    const pending = setup.machineId === machineId && (setup.cwd || DEFAULT_FOLDER) === folder ? pendingSpawn ?? null : null;
+    await set({ setup: { ...setup, machineId, machineName, cwd: folder }, linked: null, cursor: 0, pendingSpawn: pending, pendingResult: null }, gen);
     stopWatching();
     await startSession();
     return { ok: true };
   },
-  async newSession() { await set({ linked: null, cursor: 0 }); stopWatching(); await startSession(); return { ok: true }; },
+  async newSession(_msg, gen) { await set({ linked: null, cursor: 0, pendingResult: null }, gen); await startSession(); return { ok: true }; },
   /** Settings → connect to a session that already exists, by its id or a prefix. */
-  async connect({ ref }) {
+  async connect({ ref }, gen) {
     const c = await ensureClient();
+    current(gen); if (!c) throw new Error('pair this browser first');
     const want = String(ref ?? '').trim().toLowerCase();
     if (!want) throw new Error('enter a session id');
     const rows = ((await c.relay.listSessions()).sessions ?? []).filter((s) => s.state !== 'deleted');
@@ -386,28 +508,34 @@ const handlers = {
     if (!hits.length) throw new Error(`no session matches "${want}"`);
     if (hits.length > 1) throw new Error(`${hits.length} sessions match "${want}" — use more of the id`);
     if (!hits[0].sessionKeyEnvelope && hits[0].encryptedMetadata) throw new Error('that session cannot be read with this account');
-    await link(hits[0], { announce: true });
+    await link(hits[0], { announce: true, gen });
     return { ok: true };
   },
-  async pause({ paused }) { await set({ paused: !!paused }); await log(paused ? 'paused: nothing will run' : 'resumed'); await broadcastMeta(); return { ok: true }; },
+  async pause({ paused }) { const gen = epoch; await set({ paused: !!paused }, gen); await log(paused ? 'paused: nothing will run' : 'resumed', gen); await broadcastMeta(); return { ok: true }; },
   async 'exclude:add'({ pattern }) {
     const p = normalizePattern(pattern);
     if (!p) throw new Error('that does not look like a site — try example.com or example.com/account/*');
-    const { excluded = [] } = await get('excluded');
-    if (!excluded.includes(p)) await set({ excluded: [...excluded, p].sort() });
+    await change('excluded', ({ excluded = [] }) => ({ excluded: [...new Set([...excluded, p])].sort() }));
     return { ok: true, pattern: p };
   },
-  async 'exclude:remove'({ pattern }) { const { excluded = [] } = await get('excluded'); await set({ excluded: excluded.filter((p) => p !== pattern) }); return { ok: true }; },
-  async 'scripts:set'({ id, approved, enabled, remove }) {
-    const { scripts = [] } = await get('scripts');
-    const next = remove ? scripts.filter((s) => s.id !== id) : scripts.map((s) => (s.id !== id ? s : { ...s, ...(approved !== undefined ? { approved: !!approved } : {}), ...(enabled !== undefined ? { enabled: !!enabled && (approved ?? s.approved) } : {}) }));
-    await set({ scripts: next });
-    const s = scripts.find((x) => x.id === id);
-    if (s) await log(remove ? `removed saved script "${s.name}"` : `saved script "${s.name}": ${next.find((x) => x.id === id)?.enabled ? 'on' : 'off'}`);
-    await broadcastMeta();
-    return { ok: true };
+  async 'exclude:remove'({ pattern }) { await change('excluded', ({ excluded = [] }) => ({ excluded: excluded.filter((p) => p !== pattern) })); return { ok: true }; },
+  async 'scripts:set'({ id, revision, approved, enabled, remove }) {
+    const gen = epoch;
+    let entry; let next;
+    await change('scripts', ({ scripts = [] }) => {
+      entry = scripts.find((s) => s.id === id);
+      if (!entry) throw new Error('that saved script no longer exists');
+      if (entry.revision !== revision) throw new Error('that script changed — review the new version before approving it');
+      next = remove ? scripts.filter((s) => s.id !== id) : scripts.map((s) => s.id !== id ? s : { ...s, approved: approved ?? s.approved, enabled: !!(enabled ?? s.enabled) && !!(approved ?? s.approved) });
+      return { scripts: next };
+    });
+    await log(remove ? `removed saved script "${entry.name}"` : `saved script "${entry.name}": ${next.find((x) => x.id === id)?.enabled ? 'on' : 'off'}`, gen);
+    await broadcastMeta(); return { ok: true };
   },
-  async clear() { stopWatching(); client = null; await api.storage.local.clear(); post({ type: 'gone' }); return { ok: true }; },
+  async clear() {
+    epoch++; stopWatching(); client = clientJob = spawning = connectionJob = null;
+    await writes(() => api.storage.local.clear()); post({ type: 'gone' }); return { ok: true };
+  },
   /** The page button asks: should I be here? */
   async pageState({ url }) {
     const { setup, excluded = [], fab = null, paused = false } = await get(['setup', 'excluded', 'fab', 'paused']);
@@ -416,9 +544,25 @@ const handlers = {
   async 'fab:save'({ x, y }) { await set({ fab: { x, y } }); return { ok: true }; },
 };
 
+// A double click or two popups must share the same operation. Clear is allowed
+// to interrupt it; every deferred write checks the connection generation.
+let connectionJob = null;
+for (const type of ['login', 'start', 'newSession', 'connect']) {
+  const handle = handlers[type];
+  handlers[type] = (msg = {}) => {
+    const key = JSON.stringify([type, msg]);
+    if (connectionJob) return connectionJob.key === key ? connectionJob.promise : Promise.reject(new Error('a connection change is already running'));
+    const gen = ++epoch;
+    stopWatching(); clientJob = spawning = null;
+    const job = { key, promise: null };
+    job.promise = Promise.resolve().then(() => handle(msg, gen)).finally(() => { if (connectionJob === job) connectionJob = null; });
+    connectionJob = job;
+    return job.promise;
+  };
+}
 api.runtime.onMessage.addListener((msg, _sender, respond) => {
-  const h = handlers[msg?.type];
+  const h = Object.hasOwn(handlers, msg?.type) ? handlers[msg.type] : null;
   if (!h) return false;
-  Promise.resolve().then(() => h(msg)).then(respond, (e) => respond({ error: e?.message ?? String(e) }));
-  return true; // the answer is asynchronous
+  Promise.resolve().then(() => h(msg)).then(respond, (e) => respond({ error: e?.message ?? String(e) })).catch(() => {}); // popup may close before the reply
+  return true;
 });

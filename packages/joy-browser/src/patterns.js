@@ -10,16 +10,16 @@
 // a typo must never silently exclude (or, worse, appear to exclude) a site.
 
 export function parsePattern(input) {
-  let s = String(input ?? '').trim().toLowerCase();
+  let s = String(input ?? '').trim();
   if (!s) return null;
-  s = s.replace(/^[a-z][a-z0-9+.-]*:\/\//, '');      // a pasted URL: drop the scheme
+  s = s.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');      // a pasted URL: drop the scheme
   const slash = s.indexOf('/');
   let host = slash < 0 ? s : s.slice(0, slash);
   let path = slash < 0 ? '' : s.slice(slash);
-  host = host.replace(/^\*\./, '').replace(/^\.+|\.+$/g, '');
+  host = host.toLowerCase().replace(/^\*\./, '').replace(/^\.+|\.+$/g, '');
   let port = null;
   const m = /^(.*):(\d{1,5})$/.exec(host);
-  if (m) { host = m[1]; port = m[2]; }
+  if (m) { host = m[1]; port = String(Number(m[2])); if (Number(port) < 1 || Number(port) > 65535) return null; }
   if (!host || /[^a-z0-9.\-*]/.test(host) || host.includes('*')) return null;
   if (path === '/' || path === '/*') path = '';
   return { host, port, path };
@@ -39,7 +39,7 @@ export function matchesPattern(url, pattern) {
   let u;
   try { u = new URL(url); } catch { return false; }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
-  const host = u.hostname.toLowerCase();
+  const host = u.hostname.toLowerCase().replace(/\.$/, '');
   if (host !== p.host && !host.endsWith(`.${p.host}`)) return false;
   if (p.port && (u.port || (u.protocol === 'https:' ? '443' : '80')) !== p.port) return false;
   if (!p.path) return true;

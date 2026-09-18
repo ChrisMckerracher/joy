@@ -64,3 +64,10 @@ test('the relay\'s own turn events steer "working", and the attach notice is a q
   // No turn-end record from the adapter — the terminal alone must clear it.
   assert.equal(foldEvents([{ seq: 3, kind: 'turn.terminal' }], key, true).working, false);
 });
+
+test('out-of-order terminals clear working and invalid rows do not crash the feed', () => {
+  const malformed = { seq: 2, content: { ciphertext: sealV2Json({ v: 1, t: 'record', record: null }, key) } };
+  const r = foldEvents([{ seq: 3, kind: 'turn.terminal' }, malformed, prompt(1, 'go'), null, { seq: 'bad', kind: 'turn.started' }], key);
+  assert.equal(r.working, false);
+  assert.deepEqual(r.rows.map((x) => x.text), ['go']);
+});

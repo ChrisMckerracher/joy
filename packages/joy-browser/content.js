@@ -24,6 +24,7 @@
 
   let host = null; let shadow = null; let fab = null; let panel = null; let list = null; let input = null; let statusEl = null; let pendingEl = null; let titleEl = null; let pauseBtn = null;
   let port = null; let open = false; let pos = null; let ping = null;
+  let retry = null; let lastHeard = 0; let transportError = null; let sendError = null; let pendingSend = null; let sending = false; let sendBtn = null; let sendTimer = null;
   const view = { rows: [], working: false, session: null, paused: false, pending: [], linkError: null };
 
   const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); for (const k of kids) if (k != null) n.append(k); return n; };
@@ -139,38 +140,80 @@
     if (!panel) return;
     titleEl.replaceChildren(view.session?.title ?? (view.session ? `session ${view.session.localId}` : 'Joy Browser'), el('span', { className: 's', textContent: view.session ? `${view.session.localId}${view.session.machine ? ` · ${view.session.machine}` : ''}` : 'not linked' }));
     pauseBtn.textContent = view.paused ? 'Resume' : 'Pause';
-    statusEl.className = `status${view.linkError ? ' bad' : ''}`;
-    statusEl.textContent = view.linkError ? view.linkError : view.paused ? 'Paused — the agent cannot run anything in this browser.' : view.working ? 'working…' : '';
-    fab.className = `fab${view.linkError ? ' error' : view.paused ? ' paused' : view.working ? ' working' : ''}`;
+    const error = transportError || sendError || view.linkError;
+    statusEl.className = `status${error ? ' bad' : ''}`;
+    statusEl.textContent = error ? error : sending ? 'Sending…' : view.paused ? 'Paused — the agent cannot run anything in this browser.' : view.working ? 'working…' : '';
+    fab.className = `fab${error ? ' error' : view.paused ? ' paused' : view.working ? ' working' : ''}`;
+    if (sendBtn) sendBtn.disabled = sending;
     pendingEl.className = `pending${view.pending.length ? ' on' : ''}`;
     pendingEl.replaceChildren(...view.pending.map((s) => {
       const yes = el('button', { type: 'button', className: 'yes', textContent: 'Approve' }); const no = el('button', { type: 'button', textContent: 'Reject' });
-      yes.onclick = () => port?.postMessage({ type: 'script', id: s.id, approve: true });
-      no.onclick = () => port?.postMessage({ type: 'script', id: s.id, approve: false });
+      yes.onclick = () => tell({ type: 'script', id: s.id, revision: s.revision, approve: true });
+      no.onclick = () => tell({ type: 'script', id: s.id, revision: s.revision, approve: false });
       return el('div', { className: 'card' }, el('div', {}, 'The agent wants to save ', el('b', { textContent: s.name })), el('div', { className: 'm', textContent: `Runs on every visit to: ${s.match.join(', ')}` }), chip('', 'show the script', s.code), el('div', { className: 'a' }, yes, no));
     }));
   }
 
   // ── talking to the background ──
+  function disconnected(p) {
+    if (port !== p) return;
+    port = null; sending = false; clearTimeout(sendTimer);
+    transportError = 'Disconnected — reconnecting. Unsent text stays here.'; drawMeta();
+    clearTimeout(retry);
+    if (open) retry = setTimeout(() => { if (open) connect(); }, 600);
+  }
+  function tell(message) {
+    if (!port) { transportError = 'Disconnected — reconnecting. Try again when connected.'; connect(); drawMeta(); return false; }
+    const p = port;
+    try { p.postMessage(message); return true; }
+    catch { disconnected(p); try { p.disconnect(); } catch { /* gone */ } return false; }
+  }
   function connect() {
-    if (port) return;
-    try { port = api.runtime.connect({ name: 'joy-chat' }); } catch { port = null; return; }
-    port.onMessage.addListener((m) => {
-      if (m.type === 'state') { view.rows = m.rows ?? []; Object.assign(view, { working: !!m.working, session: m.session, paused: !!m.paused, pending: m.pending ?? [], linkError: m.linkError ?? null }); drawAll(); drawMeta(); if (list) list.scrollTop = list.scrollHeight; }
-      else if (m.type === 'rows') { const seen = new Set(view.rows.map((r) => r.seq)); for (const r of m.rows ?? []) if (!seen.has(r.seq)) view.rows.push(r); view.rows.sort((a, b) => a.seq - b.seq); view.working = !!m.working; drawAll(); drawMeta(); }
-      else if (m.type === 'meta') { Object.assign(view, { session: m.session, paused: !!m.paused, pending: m.pending ?? [], linkError: m.linkError ?? null }); drawMeta(); }
-      else if (m.type === 'error') { statusEl.className = 'status bad'; statusEl.textContent = m.message; }
-      else if (m.type === 'gone') teardown();
+    if (port || !host) return;
+    clearTimeout(retry);
+    let p;
+    try { p = api.runtime.connect({ name: 'joy-chat' }); }
+    catch { disconnected(null); return; }
+    port = p; lastHeard = Date.now();
+    transportError = 'Connecting…'; drawMeta();
+    p.onMessage.addListener((m) => {
+      if (port !== p) return;
+      lastHeard = Date.now(); transportError = null;
+      if (m.type === 'state' || m.type === 'meta') {
+        const changed = view.session?.sessionId !== m.session?.sessionId;
+        if (changed) { view.rows = []; pendingSend = null; sending = false; clearTimeout(sendTimer); view.working = false; }
+        Object.assign(view, { session: m.session, paused: !!m.paused, pending: m.pending ?? [], linkError: m.linkError ?? null });
+        if (m.type === 'state') { view.rows = m.rows ?? []; view.working = !!m.working; }
+        drawAll();
+        if (changed && list) list.scrollTop = list.scrollHeight;
+      } else if (m.type === 'rows') {
+        if (m.sessionId && m.sessionId !== view.session?.sessionId) return;
+        const seen = new Set(view.rows.map((r) => r.seq));
+        for (const r of m.rows ?? []) if (!seen.has(r.seq)) { view.rows.push(r); seen.add(r.seq); }
+        view.rows.sort((a, b) => a.seq - b.seq); view.rows = view.rows.slice(-300);
+        view.working = !!m.working; drawAll();
+      } else if (m.type === 'sent' && pendingSend?.id === m.id) {
+        if (input?.value.trim() === pendingSend.text) { input.value = ''; input.style.height = 'auto'; }
+        pendingSend = null; sending = false; sendError = null; clearTimeout(sendTimer);
+      } else if (m.type === 'error') {
+        if (!m.id) view.linkError = m.message;
+        else if (pendingSend?.id === m.id) { sendError = m.message; sending = false; clearTimeout(sendTimer); }
+      } else if (m.type === 'gone') { teardown(); return; }
+      drawMeta();
     });
-    // Chrome stops an idle background; the port dies with it. Come back while the panel is open.
-    port.onDisconnect.addListener(() => { port = null; if (open) setTimeout(() => { if (open) connect(); }, 600); });
-    port.postMessage({ type: 'hello' });
+    p.onDisconnect.addListener(() => { void api.runtime.lastError; disconnected(p); });
+    tell({ type: 'hello' });
   }
   function send(text) {
     const t = String(text).trim();
-    if (!t || !port) return;
-    port.postMessage({ type: 'send', text: t });
-    view.working = true; drawMeta();
+    if (!t || sending) return;
+    // Keep the same intent on an ambiguous retry (e.g. the worker died after
+    // acceptance). The relay deduplicates it; a changed draft is a new intent.
+    if (!pendingSend || pendingSend.text !== t) pendingSend = { id: crypto.randomUUID?.() ?? Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join(''), text: t };
+    if (input && !input.value.trim()) input.value = t; // option buttons also retain a failed draft
+    sendError = null; sending = tell({ type: 'send', ...pendingSend }); drawMeta();
+    clearTimeout(sendTimer);
+    if (sending) sendTimer = setTimeout(() => { sending = false; sendError = 'Delivery is not confirmed. Your text is saved here; try Send again.'; drawMeta(); }, 45_000);
   }
 
   // ── the button: drag it anywhere, click it to talk ──
@@ -199,8 +242,12 @@
     panel.style.top = `${clamp(top, EDGE, Math.max(EDGE, innerHeight - PANEL_H - EDGE))}px`;
   }
   function toggle(next = !open) {
+    clearInterval(ping); ping = null;
     open = next; panel.classList.toggle('open', open);
-    if (open) { connect(); place(); setTimeout(() => input?.focus(), 0); ping = setInterval(() => port?.postMessage({ type: 'ping' }), 20_000); }
+    if (open) { connect(); place(); setTimeout(() => input?.focus(), 0); ping = setInterval(() => {
+      if (port && Date.now() - lastHeard > 45_000) { const p = port; disconnected(p); try { p.disconnect(); } catch { /* gone */ } }
+      if (!port) connect(); else tell({ type: 'ping' });
+    }, 20_000); }
     else { clearInterval(ping); ping = null; }
   }
 
@@ -211,15 +258,15 @@
     shadow = host.attachShadow({ mode: 'closed' });
     fab = el('button', { className: 'fab', type: 'button', title: 'Joy — talk to your session' }, 'J', el('span', { className: 'dot' }));
     titleEl = el('div', { className: 't' });
-    pauseBtn = el('button', { className: 'hbtn', type: 'button' }); pauseBtn.onclick = () => port?.postMessage({ type: 'pause', paused: !view.paused });
+    pauseBtn = el('button', { className: 'hbtn', type: 'button' }); pauseBtn.onclick = () => tell({ type: 'pause', paused: !view.paused });
     const hide = el('button', { className: 'hbtn', type: 'button', textContent: 'Hide on this site', title: 'Adds this site to Excluded sites: no button here, and the agent cannot run scripts here.' });
-    hide.onclick = () => { port?.postMessage({ type: 'hideHere', host: location.hostname }); teardown(); };
+    hide.onclick = () => tell({ type: 'hideHere', host: location.hostname }); // storage change hides it after success
     const close = el('button', { className: 'hbtn', type: 'button', textContent: '✕' }); close.onclick = () => toggle(false);
     list = el('div', { className: 'list' }); statusEl = el('div', { className: 'status' }); pendingEl = el('div', { className: 'pending' });
     input = el('textarea', { rows: 1, placeholder: 'Message your session…' });
-    const sendBtn = el('button', { className: 'send', type: 'submit', textContent: 'Send' });
+    sendBtn = el('button', { className: 'send', type: 'submit', textContent: 'Send' });
     const form = el('form', {}, input, sendBtn);
-    const submit = () => { send(input.value); input.value = ''; input.style.height = 'auto'; };
+    const submit = () => send(input.value);
     form.onsubmit = (e) => { e.preventDefault(); submit(); };
     input.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); } };
     input.onkeyup = input.onkeypress = (e) => e.stopPropagation(); // a page's own hotkeys must not fire while you type
@@ -241,14 +288,18 @@
     connect(); // the dot on the button is live even with the panel shut
   }
   function teardown() {
-    clearInterval(ping); ping = null; open = false;
+    clearInterval(ping); clearTimeout(retry); clearTimeout(sendTimer); ping = retry = null; open = false;
     try { port?.disconnect(); } catch { /* gone */ } port = null;
     removeEventListener('resize', place); visualViewport?.removeEventListener('resize', place); visualViewport?.removeEventListener('scroll', place);
-    host?.remove(); host = shadow = fab = panel = list = input = null;
+    host?.remove(); host = shadow = fab = panel = list = input = sendBtn = null;
+    view.rows = []; view.session = null; view.working = false; pendingSend = null; sending = false;
   }
 
+  let syncId = 0;
   async function sync() {
+    const id = ++syncId;
     const st = await ask({ type: 'pageState', url: location.href });
+    if (id !== syncId || !st || st.error) return;
     if (st?.show) build(st); else teardown();
   }
   // Setup finishing, a site being excluded, everything being cleared: the button follows.
