@@ -95,6 +95,7 @@ Things that follow from the platform:
 - **The debugging bar (Chrome).** Chrome shows "Joy Browser is debugging this browser" while a script runs. The debugger is attached per script and detached afterwards.
 - **Latency (Chrome).** Chrome stops an idle service worker. An alarm wakes it every 30 seconds, so a script waits at most that long; an open chat panel holds a port and pings, which keeps it awake. Firefox's background page does not sleep.
 - **Console capture (Firefox).** A content script sees only its own `console` calls, so a result carries what the script logged, not what the page logged. Chrome carries both.
+- **Phones (Orion on iOS, for one).** `content.js` detects a phone by its physical screen and turns the panel into a full-width sheet above the keyboard (`visualViewport`), with 16px inputs so iOS does not zoom. A page with no viewport meta is laid out ~980px wide on a phone; the widget counter-zooms so it keeps its real size. The popup carries a viewport meta for the same reason. Only the Firefox build can work in a WebKit browser: there is no `debugger` API there.
 - **The backup code is the whole account.** It is kept in the profile's extension storage so the extension can sign in again by itself. **Clear everything** removes it.
 
 ## Signing for Firefox

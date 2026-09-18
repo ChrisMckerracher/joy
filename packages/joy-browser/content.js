@@ -9,7 +9,18 @@
   if (window.top !== window || window.__joyBrowserLoaded) return;
   window.__joyBrowserLoaded = true;
   const api = globalThis.browser ?? globalThis.chrome;
-  const FAB = 46; const PANEL_W = 370; const PANEL_H = 540; const EDGE = 12;
+  const COARSE = matchMedia('(pointer: coarse)').matches;
+  const FAB = COARSE ? 54 : 46; const PANEL_W = 370; const PANEL_H = 540; const EDGE = COARSE ? 16 : 12;
+  // A phone, by its physical screen (in CSS px, portrait width): the panel is a
+  // sheet there. A page with no viewport meta is laid out ~980px wide on a phone
+  // and shown zoomed out, which would shrink the widget to a thumbnail — `z`
+  // is the zoom that undoes that (1 on a page that fits its screen).
+  const PHONE = COARSE && Math.min(screen.width, screen.height) < 520;
+  const screenW = () => (matchMedia('(orientation: portrait)').matches ? Math.min(screen.width, screen.height) : Math.max(screen.width, screen.height));
+  const layoutW = () => document.documentElement.clientWidth || innerWidth; // stable under pinch-zoom, unlike innerWidth on iOS
+  const layoutH = () => document.documentElement.clientHeight || innerHeight;
+  const zoom = () => (PHONE ? Math.max(1, layoutW() / screenW()) : 1);
+  const narrow = () => PHONE || innerWidth < 520; // a small window on a desktop is a sheet too
 
   let host = null; let shadow = null; let fab = null; let panel = null; let list = null; let input = null; let statusEl = null; let pendingEl = null; let titleEl = null; let pauseBtn = null;
   let port = null; let open = false; let pos = null; let ping = null;
@@ -21,7 +32,7 @@
   const CSS = `
     :host { all: initial; }
     * { box-sizing: border-box; }
-    .fab { position: fixed; width: ${FAB}px; height: ${FAB}px; border-radius: 50%; border: 0; cursor: grab; z-index: 2147483647; display: grid; place-items: center;
+    .fab { position: fixed; width: ${FAB}px; height: ${FAB}px; -webkit-tap-highlight-color: transparent; border-radius: 50%; border: 0; cursor: grab; z-index: 2147483647; display: grid; place-items: center;
       background: #16161a; color: #fff; box-shadow: 0 4px 14px rgba(0,0,0,.35), 0 0 0 1px rgba(255,255,255,.14) inset; font: 600 17px/1 -apple-system, system-ui, sans-serif; touch-action: none; user-select: none; }
     .fab:active { cursor: grabbing; }
     .fab .dot { position: absolute; right: 2px; top: 2px; width: 11px; height: 11px; border-radius: 50%; border: 2px solid #16161a; background: #32d158; }
@@ -49,6 +60,20 @@
     .prose { display: grid; gap: 6px; white-space: pre-wrap; overflow-wrap: anywhere; } .prose code { font: 12px ui-monospace, Menlo, Consolas, monospace; background: var(--card); border-radius: 4px; padding: 1px 4px; }
     .prose pre { margin: 0; padding: 8px 9px; background: var(--card); border-radius: 8px; font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; }
     textarea::-webkit-scrollbar { display: none; }
+    /* A phone: the panel is a sheet from the bottom, the whole width, above the
+       keyboard (--kb follows visualViewport). Inline left/top from place() lose. */
+    .panel.sheet { left: 0 !important; top: auto !important; right: 0; bottom: var(--kb, 0px); width: 100%; max-width: 100%; height: min(${PANEL_H}px, 100% - 56px); max-height: calc(100% - 56px);
+      border-radius: 16px 16px 0 0; padding-bottom: env(safe-area-inset-bottom, 0px); }
+    .panel.sheet form { padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
+    .panel.sheet.open + .fab { display: none; } /* the sheet covers the button's corner; ✕ closes */
+    .panel.sheet header { flex-wrap: wrap; } .panel.sheet header .t { flex: 1 1 100%; } .panel.sheet header .hbtn:first-of-type { margin-left: auto; }
+    @media (pointer: coarse) {
+      .panel { font-size: 15px; }
+      textarea { font-size: 16px; min-height: 42px; } /* under 16px, iOS zooms the page on focus */
+      .hbtn, .card .a button, .opts button, .send { min-height: 36px; padding: 6px 12px; font-size: 14px; }
+      .chip > summary { padding: 8px 11px; } .chip { font-size: 14px; }
+      header { padding: 12px 14px; } header .s { font-size: 12px; }
+    }
     .chip pre { margin: 0; padding: 8px 9px; border-top: 1px solid var(--line); font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow: auto; color: var(--fg); }
     .opts { display: flex; flex-wrap: wrap; gap: 6px; } .opts button { border: 1px solid var(--accent); color: var(--accent); background: transparent; border-radius: 999px; padding: 4px 11px; }
     .status { padding: 0 12px 6px; color: var(--dim); font-size: 11px; min-height: 17px; } .status.bad { color: var(--bad); }
@@ -151,9 +176,22 @@
   // ── the button: drag it anywhere, click it to talk ──
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   function place() {
-    const x = clamp((pos?.x ?? 1) * innerWidth - FAB / 2, EDGE, innerWidth - FAB - EDGE);
-    const y = clamp((pos?.y ?? 1) * innerHeight - FAB / 2, EDGE, innerHeight - FAB - EDGE);
+    if (!fab) return;
+    // Everything below is in the widget's own px: the layout viewport divided by the zoom that undoes a zoomed-out page.
+    const z = zoom(); const W = layoutW() / z; const H = layoutH() / z;
+    fab.style.zoom = panel.style.zoom = z === 1 ? '' : String(z);
+    // Keep the button above the bottom of the visible page, where a phone browser's own bar sits.
+    const bottom = EDGE + (COARSE ? 44 : 0);
+    const x = clamp((pos?.x ?? 1) * W - FAB / 2, EDGE, W - FAB - EDGE);
+    const y = clamp((pos?.y ?? 1) * H - FAB / 2, EDGE, H - FAB - bottom);
     fab.style.left = `${x}px`; fab.style.top = `${y}px`;
+    panel.classList.toggle('sheet', narrow());
+    if (narrow()) {
+      // The keyboard shrinks the visual viewport, not the layout one: lift the sheet by the difference.
+      const vv = visualViewport;
+      panel.style.setProperty('--kb', `${vv ? Math.max(0, (layoutH() - vv.height - vv.offsetTop) / z) : 0}px`);
+      return;
+    }
     // The panel opens toward whichever side of the button has room.
     const left = x + FAB / 2 > innerWidth / 2 ? x + FAB - PANEL_W : x;
     const top = y + FAB / 2 > innerHeight / 2 ? y - PANEL_H - 10 : y + FAB + 10;
@@ -194,10 +232,10 @@
     fab.onpointermove = (e) => {
       if (!drag) return;
       if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 5) return;
-      drag.moved = true; pos = { x: clamp(e.clientX / innerWidth, 0, 1), y: clamp(e.clientY / innerHeight, 0, 1) }; place();
+      drag.moved = true; pos = { x: clamp(e.clientX / layoutW(), 0, 1), y: clamp(e.clientY / layoutH(), 0, 1) }; place();
     };
     fab.onpointerup = (e) => { const d = drag; drag = null; try { fab.releasePointerCapture(e.pointerId); } catch { /* already released */ } if (!d) return; if (d.moved) void ask({ type: 'fab:save', ...pos }); else toggle(); };
-    addEventListener('resize', place);
+    addEventListener('resize', place); visualViewport?.addEventListener('resize', place); visualViewport?.addEventListener('scroll', place);
     (document.body ?? document.documentElement).append(host);
     place(); drawMeta(); drawAll();
     connect(); // the dot on the button is live even with the panel shut
@@ -205,7 +243,7 @@
   function teardown() {
     clearInterval(ping); ping = null; open = false;
     try { port?.disconnect(); } catch { /* gone */ } port = null;
-    removeEventListener('resize', place);
+    removeEventListener('resize', place); visualViewport?.removeEventListener('resize', place); visualViewport?.removeEventListener('scroll', place);
     host?.remove(); host = shadow = fab = panel = list = input = null;
   }
 
