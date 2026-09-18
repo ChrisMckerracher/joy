@@ -836,7 +836,7 @@ class Sync {
         // its own work queue trusts.
         const { v2 } = await import('./v2/api');
         const { openCard } = await import('./v2/card');
-        const { v2ActiveAt } = await import('./v2/liveness');
+        const { v2ActiveAt, v2Online } = await import('./v2/liveness');
         // This request runs on every poll tick, so it doubles as the connection
         // probe — no extra traffic, and it reports the transport that actually
         // carries data rather than the SSE stream native can never open.
@@ -916,7 +916,7 @@ class Sync {
                 lastMessage: null,
                 thinking: existing?.thinking ?? false,
                 thinkingAt: existing?.thinkingAt ?? 0,
-                presence: row.online ? 'online' : (row.lastTurnAt ?? row.updatedAt),
+                presence: v2Online(row) ? 'online' : (row.lastTurnAt ?? row.updatedAt),
             } as unknown as (Omit<Session, 'presence'> & { presence?: "online" | number }));
         }
 

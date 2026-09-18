@@ -358,6 +358,25 @@ describe('session card publish (daemon PATCH)', () => {
     expect(typeof row.updatedAt).toBe('number');
   });
 
+  it('an archived session is offline even while its daemon holds a live lease', async () => {
+    // The lease is the MACHINE's pulse. Every archived run on a running daemon
+    // used to read online, and the app turned that into "last seen just now"
+    // on all of them, regenerated on every poll (2026-09-18).
+    const d = makeDaemon('mach-archived');
+    await d.acquire();
+    const sid = await spawnBound(d);
+    const live = (await call('GET', '/joy/v2/sessions')).json.sessions.find((s) => s.sessionId === sid);
+    expect(live.online).toBe(true);
+    const patch = await call('PATCH', `/joy/v2/daemon/sessions/${sid}`, {
+      headers: d.headers(), token: null,
+      body: { encryptedMetadata: 'v2e1:sealed-card', state: 'archived' },
+    });
+    expect(patch.status).toBe(200);
+    const row = (await call('GET', '/joy/v2/sessions')).json.sessions.find((s) => s.sessionId === sid);
+    expect(row.state).toBe('archived');
+    expect(row.online).toBe(false); // the daemon is up; the session is over
+  });
+
   it('a foreign daemon cannot write the card', async () => {
     const owner = makeDaemon('mach-own'); await owner.acquire();
     const sid = await spawnBound(owner);

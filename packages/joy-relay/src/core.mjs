@@ -1102,8 +1102,15 @@ export function createCore(db, notify, { maxEventsPerSession = DEFAULT_MAX_EVENT
     const { rows } = await db.query(
       `SELECT s.*,
          (SELECT count(*)::int FROM turns t WHERE t.session_id = s.id AND t.state = 'queued') AS queued_turns,
-         EXISTS (SELECT 1 FROM daemon_leases l WHERE l.daemon_id = s.owner_daemon_id
-                   AND l.released_at IS NULL AND l.expires_at > now()) AS online,
+         -- Online is the SESSION's pulse, not its machine's: the daemon lease
+         -- says the machine is up, and only a session that still has a
+         -- process behind it inherits that. Every archived, detached and
+         -- failed session on a running daemon used to read online, so the app
+         -- stamped "last seen just now" on 130 archived automation runs, and
+         -- the timestamp was regenerated on every poll (2026-09-18).
+         (s.state IN ('provisioning','starting','active')
+          AND EXISTS (SELECT 1 FROM daemon_leases l WHERE l.daemon_id = s.owner_daemon_id
+                        AND l.released_at IS NULL AND l.expires_at > now())) AS online,
          (SELECT tu.state FROM turns tu WHERE tu.session_id = s.id
             AND tu.state IN ('dispatching','running','cancelling')
           ORDER BY tu.request_seq LIMIT 1) AS executing_state,
