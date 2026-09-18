@@ -20,7 +20,10 @@ if ! command -v node >/dev/null || [[ "$(node -v)" != v22* ]]; then
   curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - > /dev/null
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs > /dev/null
 fi
-node -v; caddy version | head -1
+# The packages set engines.npm >= 11.10 (the seven-day release-age policy) with
+# engine-strict, so the distro's npm 10 refuses to install them.
+NPM_V="$(npm -v)"; if [[ "${NPM_V%%.*}" -lt 11 || ( "${NPM_V%%.*}" -eq 11 && "$(echo "$NPM_V" | cut -d. -f2)" -lt 10 ) ]]; then sudo npm install -g npm@^11.10 > /dev/null; fi
+node -v; npm -v; caddy version | head -1
 
 echo "== fail2ban =="
 sudo cp "$INFRA/jail.local" /etc/fail2ban/jail.local
