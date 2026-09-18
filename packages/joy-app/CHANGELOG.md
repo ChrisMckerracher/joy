@@ -1,3 +1,11 @@
+# Sep 18 (2) — Archived sessions stop claiming to be "seen just now"
+
+- **An archived, detached or failed session now reads as offline, with its real last-seen time.** Every finished session on a running machine used to say "last seen just now", refreshed on every poll, because "online" only asked whether the machine's daemon was alive — not whether the session still had a process behind it. Now both have to be true. Sessions that ended show when their last turn really ran. The relay applies the same rule, so the MCP server and the app agree.
+
+# Sep 18 (1) — The message box grows again
+
+- **Typing past the end of a line on a phone makes the box taller, up to three lines, then scrolls.** A fix for the box staying tall after sending a long message had pinned its height to a measurement, which stopped it from ever growing; text scrolled inside a one-line box instead. The height is now forced only where it has to be: an emptied box collapses to one line, and a box with text in it sizes itself as it always did.
+
 # Sep 17 (3) — Your own messages keep their formatting
 
 - **What you paste now looks the way you pasted it.** Your own messages are no longer read as Markdown, so spacing, indentation and line breaks survive exactly as you typed them. Pasted SQL, a log or a block of code used to be split into a separate paragraph per line with a gap between every one, which made anything multi-line hard to read. Replies from an agent still render as Markdown.
