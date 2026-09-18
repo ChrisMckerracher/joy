@@ -74,6 +74,8 @@ An add-on id belongs to the Mozilla account that first signs it. If you are not 
 ## If nothing happens
 
 - **The agent never uses the browser.** Sessions learn how from their machine's daemon. Run `joy update` on that machine. For a session that was already running, send `/joy-prompt` to refresh its instructions.
+- **"Could not pair: could not reach …".** The request never reached a relay. The address is what was tried, with `https://` added when you typed none. Check that the address is complete (usually `relay.example.com:4997`, not a nickname), and open `<address>/joy/v2/capabilities` in a normal tab of the same browser: a relay answers with a short JSON line. If the tab works and the extension does not, the browser is not letting the extension make the request. In Orion, give the extension access to all websites in its settings.
+- **"… does not know this backup code".** The relay answered, but this account is not on it. Use the relay the app is signed in to (Settings → Account shows it).
 - **"Start my session" fails.** The machine must be online, with a daemon that can start Claude Code. Run `joy doctor` on it.
 - **A script takes a while to run in Chrome.** Chrome puts idle extensions to sleep and wakes this one every 30 seconds. While the chat panel is open, the extension stays awake and responds at once. Firefox does not sleep.
 - **"this page cannot be scripted".** Browser pages such as `chrome://` and `about:` addresses and the browsers' add-on stores cannot be scripted. Have the agent open the page it needs.

@@ -13,7 +13,7 @@ async function render() {
   const st = await ask('status');
   app.replaceChildren();
   if (flash) { app.append(el('p', { className: flash.bad ? 'err' : 'ok', textContent: flash.text })); flash = null; }
-  if (st.stage === 'pair') return renderPair();
+  if (st.stage === 'pair') return renderPair(st);
   if (st.stage === 'machine') return renderMachine(st);
   return ({ main: renderMain, session: renderSession, excluded: renderExcluded, scripts: renderScripts })[page](st);
 }
@@ -23,11 +23,17 @@ const busy = (btn, label) => { btn.disabled = true; btn.textContent = label; };
 const header = (title, back) => el('div', { className: 'row' }, el('h1', { textContent: title }), back ? Object.assign(el('button', { className: 'quiet', textContent: '‹ Back' }), { onclick: () => go('main') }) : null);
 
 // ── setup ────────────────────────────────────────────────────────────────────
-function renderPair() {
-  const relay = el('input', { type: 'text', placeholder: 'relay.example.com:4997', autocomplete: 'off' });
-  const code = el('input', { type: 'password', placeholder: 'XXXXX-XXXXX-…', autocomplete: 'off' });
+let typedCode = ''; // survives a failed try while this popup is open; never stored
+function renderPair(st) {
+  const relay = el('input', { type: 'text', placeholder: 'relay.example.com:4997', autocomplete: 'off', value: st.draft?.relayUrl ?? '' });
+  const code = el('input', { type: 'password', placeholder: 'XXXXX-XXXXX-…', autocomplete: 'off', value: typedCode });
   const next = el('button', { textContent: 'Continue' });
-  next.onclick = async () => { busy(next, 'Checking…'); try { await ask('login', { relayUrl: relay.value, backupCode: code.value }); render(); } catch (e) { fail(new Error(`Could not pair: ${e.message}`)); } };
+  next.onclick = async () => {
+    typedCode = code.value; busy(next, 'Checking…');
+    try { await ask('login', { relayUrl: relay.value, backupCode: code.value }); typedCode = ''; render(); }
+    catch (e) { fail(new Error(`Could not pair: ${e.message}`)); }
+  };
+  code.onkeydown = relay.onkeydown = (e) => { if (e.key === 'Enter') next.click(); };
   app.append(el('h1', { textContent: 'Pair this browser' }),
     el('p', { textContent: 'Your backup code is in the joy app under Settings → Account. It is the whole account and is kept in this browser profile until you clear it: pair only a profile you trust.' }),
     el('label', {}, 'Relay', relay), el('label', {}, 'Backup code', code), next);

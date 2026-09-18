@@ -13,7 +13,7 @@
 // the excluded-sites list.
 import { api } from './src/api.js';
 import { parseBackupCode, contentKeyPair, relayPerimeterKey, openSessionKeyEnvelope, openCard, openMachineKey, openMachineMetadata, sealSpawnSpec, sealText, b64, unb64 } from './src/crypto.js';
-import { loginWithSecret, RelayClient } from './src/relay.js';
+import { loginWithSecret, RelayClient, relayAddress, describeRelay } from './src/relay.js';
 import { Watcher } from './src/watcher.js';
 import { browserMessage, splitMatch } from './src/tags.js';
 import { matchesAny, normalizePattern } from './src/patterns.js';
@@ -339,20 +339,27 @@ async function machinesView() {
 
 const handlers = {
   async status() {
-    const s = await get(['setup', 'linked', 'paused', 'excluded', 'scripts', 'linkError', 'log']);
+    const s = await get(['setup', 'linked', 'paused', 'excluded', 'scripts', 'linkError', 'log', 'draft']);
     return {
       stage: !s.setup?.secret ? 'pair' : !s.setup?.machineId ? 'machine' : 'ready',
       relayUrl: s.setup?.relayUrl ?? null, machineName: s.setup?.machineName ?? null, cwd: s.setup?.cwd ?? null,
       linked: s.linked ?? null, starting: !!spawning, linkError: s.linkError ?? null, paused: !!s.paused,
       excluded: s.excluded ?? [], scripts: (s.scripts ?? []).map(({ id, name, match, code, enabled, approved }) => ({ id, name, match, code, enabled, approved })),
-      log: s.log ?? [], defaultFolder: DEFAULT_FOLDER,
+      log: s.log ?? [], defaultFolder: DEFAULT_FOLDER, draft: s.draft ?? null,
     };
   },
   /** Step one: prove the relay and the code, keep them, and say which machines there are. */
   async login({ relayUrl, backupCode }) {
-    const url = (/^https?:\/\//i.test(relayUrl.trim()) ? relayUrl.trim() : `https://${relayUrl.trim()}`).replace(/\/+$/, '');
-    const accountSecret = parseBackupCode(backupCode);
-    await loginWithSecret(url, accountSecret, { perimeterKey: relayPerimeterKey(accountSecret) });
+    const { url, error } = relayAddress(relayUrl);
+    if (error) throw new Error(error);
+    await set({ draft: { relayUrl: String(relayUrl ?? '').trim() } }); // so a failed try does not cost the typing
+    let accountSecret;
+    try { accountSecret = parseBackupCode(backupCode); } catch { throw new Error('that is not a backup code — copy it from the joy app, Settings → Account'); }
+    const perimeterKey = relayPerimeterKey(accountSecret);
+    const wrong = await describeRelay(url, { perimeterKey });
+    if (wrong) throw new Error(wrong);
+    try { await loginWithSecret(url, accountSecret, { perimeterKey }); }
+    catch (e) { throw new Error(e?.status === 401 || e?.status === 403 ? `${url} does not know this backup code — is it the relay this account lives on?` : `${url}: ${e?.message ?? e}`); }
     client = null;
     await set({ setup: { relayUrl: url, secret: b64(accountSecret) }, linked: null, cursor: 0, linkError: null });
     await log(`paired with ${url}`);

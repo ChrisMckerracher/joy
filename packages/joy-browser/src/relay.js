@@ -9,6 +9,39 @@ export class RelayError extends Error {
   constructor(status, code) { super(`relay ${status}: ${code}`); this.status = status; this.code = code; }
 }
 
+/** A typed relay address → the URL to use, or a reason it cannot be one.
+ *  A bare host[:port] gets https://, the same rule as the app and `joy auth`. */
+export function relayAddress(input) {
+  const v = String(input ?? '').trim().replace(/\/+$/, '');
+  if (!v) return { error: 'enter your relay\'s address' };
+  const url = /^https?:\/\//i.test(v) ? v : `https://${v}`;
+  let u;
+  try { u = new URL(url); } catch { return { error: `"${v}" is not an address — a relay looks like relay.example.com:4997` }; }
+  if (u.pathname !== '/' || u.search || u.hash) return { error: `use just the host, without a path: ${u.origin}` };
+  if (!u.hostname.includes('.') && u.hostname !== 'localhost' && !/^\[/.test(u.hostname)) return { error: `"${u.hostname}" is not a full address — a relay looks like relay.example.com:4997` };
+  return { url: u.origin };
+}
+
+/** Is there a joy relay at `url`? Resolves null when there is, or one sentence
+ *  saying what is there instead. A dead network is the common case, and the
+ *  browsers' own words for it ("Load failed", "Failed to fetch") say nothing. */
+export async function describeRelay(url, { perimeterKey, timeoutMs = 12_000 } = {}) {
+  const headers = { 'x-joy-client': CLIENT };
+  if (perimeterKey) headers['x-joy-relay-key'] = perimeterKey;
+  const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  let r;
+  try { r = await fetch(`${url}/joy/v2/capabilities`, { headers, signal: ctl.signal }); }
+  catch (e) {
+    if (ctl.signal.aborted) return `${url} did not answer within ${Math.round(timeoutMs / 1000)} s`;
+    return `could not reach ${url} (${e?.message ?? e}). Check the address — a relay is usually relay.example.com:4997 — and that this browser can open ${url}/joy/v2/capabilities`;
+  } finally { clearTimeout(timer); }
+  if (r.status === 401 || r.status === 403) return `${url} wants an access key this account does not have`;
+  if (!r.ok) return `${url} answered ${r.status} — is it a joy relay?`;
+  const caps = await r.json().catch(() => null);
+  if (caps?.relay !== 'joy-relay') return `${url} is not a joy relay`;
+  return null;
+}
+
 /** POST /auth — a signature over a self-chosen challenge. Returns the bearer. */
 export async function loginWithSecret(relayUrl, accountSecret, { perimeterKey } = {}) {
   const kp = signKeyPair(accountSecret);
