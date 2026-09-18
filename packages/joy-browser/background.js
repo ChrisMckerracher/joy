@@ -26,6 +26,12 @@ const LOAD_TIMEOUT_MS = 30_000;
 const DEFAULT_FOLDER = '~/joy-browser';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Wiring that must not take the whole background down when a browser lacks an
+// API: each piece is tried on its own, and what failed is reported by
+// `diagnostics` — the popup shows it — instead of being a silent dead worker.
+const startupErrors = [];
+const wire = (what, fn) => { try { fn(); } catch (e) { startupErrors.push(`${what}: ${e?.message ?? e}`); } };
+
 // ── state ────────────────────────────────────────────────────────────────────
 // storage.local — the background can be stopped at any moment, so nothing that
 // matters lives only in memory:
@@ -188,7 +194,7 @@ async function runSavedScripts(tab) {
     await log(`saved script "${s.name}" on ${new URL(tab.url).host}: ${r.error ? `error — ${String(r.error).split('\n')[0]}` : 'ok'}`, gen);
   }
 }
-api.tabs.onUpdated.addListener((_id, info, tab) => { if (info.status === 'complete') background(() => runSavedScripts(tab)); });
+wire('tabs.onUpdated', () => api.tabs.onUpdated.addListener((_id, info, tab) => { if (info.status === 'complete') background(() => runSavedScripts(tab)); }));
 
 // ── the chat feed ────────────────────────────────────────────────────────────
 const ports = new Set();
@@ -256,7 +262,8 @@ async function sendAsUser(text, id) {
   background(() => ensureWatching());
 }
 
-api.runtime.onConnect.addListener((port) => {
+wire('runtime.onConnect', () => api.runtime.onConnect.addListener(portOpened));
+function portOpened(port) {
   if (port.name !== 'joy-chat') return;
   ports.add(port);
   port.onDisconnect.addListener(() => ports.delete(port));
@@ -273,7 +280,7 @@ api.runtime.onConnect.addListener((port) => {
       else if (m.type === 'hideHere') { await handlers['exclude:add']({ pattern: m.host }); }
     } catch (e) { try { port.postMessage({ type: 'error', id: m?.type === 'send' ? m.id : null, message: e?.message ?? String(e) }); } catch { /* gone */ } }
   });
-});
+}
 
 // ── watching the linked session ──────────────────────────────────────────────
 const store = {
@@ -436,10 +443,15 @@ async function refreshLink(gen) {
 // Chrome stops an idle worker; an alarm is the polling floor. Module startup
 // also resumes a persisted spawn, including when no browser startup event fires.
 const tick = async () => { await ensureLinked(); await ensureWatching(); };
-api.alarms.onAlarm.addListener((a) => { if (a.name === ALARM) background(tick); });
-api.runtime.onStartup.addListener(() => background(tick));
-api.runtime.onInstalled.addListener(() => background(tick));
-background(async () => { await api.alarms.create(ALARM, { periodInMinutes: 0.5 }); await tick(); });
+// A browser without alarms (some WebKit ones) gets a plain interval: it lives as
+// long as the background does, which in such browsers is the whole time.
+if (api.alarms) {
+  wire('alarms.onAlarm', () => api.alarms.onAlarm.addListener((a) => { if (a.name === ALARM) background(tick); }));
+  background(async () => { await api.alarms.create(ALARM, { periodInMinutes: 0.5 }); });
+} else { startupErrors.push('alarms: not available — polling on a 30 s interval instead'); setInterval(() => background(tick), 30_000); }
+wire('runtime.onStartup', () => api.runtime.onStartup.addListener(() => background(tick)));
+wire('runtime.onInstalled', () => api.runtime.onInstalled.addListener(() => background(tick)));
+background(tick);
 
 // ── requests from the popup and the page button ──────────────────────────────
 async function machinesView() {
@@ -540,6 +552,18 @@ const handlers = {
   async pageState({ url }) {
     const { setup, excluded = [], fab = null, paused = false } = await get(['setup', 'excluded', 'fab', 'paused']);
     return { show: !!setup?.machineId && !matchesAny(url, excluded), fab, paused };
+  },
+  /** What a person can paste when the extension misbehaves in a browser we
+   *  cannot run ourselves. No secrets: only which keys exist. */
+  async diagnostics() {
+    const s = await get(['setup', 'linked', 'cursor', 'paused', 'excluded', 'scripts', 'linkError', 'relayError', 'pendingSpawn', 'pendingResult', 'log']);
+    return {
+      manifestVersion: api.runtime.getManifest?.().manifest_version ?? null, version: api.runtime.getManifest?.().version ?? null,
+      apis: { alarms: !!api.alarms, debugger: !!api.debugger, tabsExecuteScript: typeof api.tabs?.executeScript === 'function', scripting: !!api.scripting, tabsQuery: typeof api.tabs?.query === 'function', storageOnChanged: !!api.storage?.onChanged, webCrypto: !!globalThis.crypto?.subtle, randomUUID: typeof globalThis.crypto?.randomUUID === 'function' },
+      startupErrors,
+      state: { paired: !!s.setup?.secret, machine: s.setup?.machineName ?? null, relay: s.setup?.relayUrl ?? null, linked: s.linked ? { localId: s.linked.localId, hasEnvelope: !!s.linked.envelope } : null, cursor: s.cursor ?? null, paused: !!s.paused, excluded: (s.excluded ?? []).length, scripts: (s.scripts ?? []).length, pendingSpawn: !!s.pendingSpawn, pendingResult: !!s.pendingResult, linkError: s.linkError ?? null, relayError: s.relayError ?? null, spawning: !!spawning, watching: !!watcher, ports: ports.size },
+      log: (s.log ?? []).slice(-12),
+    };
   },
   async 'fab:save'({ x, y }) { await set({ fab: { x, y } }); return { ok: true }; },
 };

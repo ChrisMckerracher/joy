@@ -111,6 +111,8 @@ test('popup unavailable background shows a recoverable error without an unhandle
   const d = dom(); const api = { storage: { onChanged: event() }, runtime: { sendMessage: async () => { throw Error('background unavailable'); } } };
   vm.runInNewContext(readFileSync(new URL('../popup.js', import.meta.url), 'utf8'), { chrome: api, document: d.document, console, setTimeout, clearTimeout });
   await flush(); assert.match(d.app.textContent, /background unavailable/); assert.ok(d.find('button', 'Retry'));
+  // and the one screen that needs no background: what to paste when asking for help
+  assert.match(d.app.textContent, /Diagnostics/); assert.match(d.find('pre').textContent, /"backgroundError": "background unavailable"/); assert.ok(d.find('button', 'Copy'));
 });
 
 test('a lost acknowledgement times out independently of a healthy port', async () => {

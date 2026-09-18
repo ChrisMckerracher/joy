@@ -6,7 +6,7 @@ const app = document.getElementById('app');
 const ask = async (type, extra = {}) => { const r = await api.runtime.sendMessage({ type, ...extra }); if (!r || r.error) throw new Error(r?.error ?? 'The extension did not respond. Try again.'); return r; };
 const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); for (const k of kids) if (k != null) n.append(k); return n; };
 
-let page = 'main'; // main | session | excluded | scripts
+let page = 'main'; // main | session | excluded | scripts | diagnostics
 let flash = null;  // { bad, text } shown once at the top
 
 let renderId = 0; let refresh = null;
@@ -18,10 +18,16 @@ async function render() {
   if (st.starting) refresh = setTimeout(() => render(), 750);
   app.replaceChildren();
   if (flash) { app.append(el('p', { className: flash.bad ? 'err' : 'ok', textContent: flash.text })); flash = null; }
+  if (page === 'diagnostics') return await renderDiagnostics(st);
   if (st.stage === 'pair') return renderPair(st);
   if (st.stage === 'machine') return await renderMachine(st);
-  return ({ main: renderMain, session: renderSession, excluded: renderExcluded, scripts: renderScripts })[page](st);
-  } catch (e) { if (id === renderId) app.replaceChildren(el('p', { className: 'err', textContent: e.message }), Object.assign(el('button', { textContent: 'Retry' }), { onclick: () => render() })); }
+  return ({ main: renderMain, session: renderSession, excluded: renderExcluded, scripts: renderScripts, diagnostics: renderDiagnostics })[page](st);
+  } catch (e) {
+    if (id !== renderId) return;
+    // The background did not answer: the one screen that needs nothing from it.
+    app.replaceChildren(el('p', { className: 'err', textContent: e.message }), Object.assign(el('button', { textContent: 'Retry' }), { onclick: () => render() }));
+    await renderDiagnostics(null, e);
+  }
 }
 const go = (p) => { page = p; render(); };
 const fail = (e) => { flash = { bad: true, text: e.message }; render(); };
@@ -42,7 +48,8 @@ function renderPair(st) {
   code.onkeydown = relay.onkeydown = (e) => { if (e.key === 'Enter') next.click(); };
   app.append(el('h1', { textContent: 'Pair this browser' }),
     el('p', { textContent: 'Your backup code is in the joy app under Settings → Account. It is the whole account and is kept in this browser profile until you clear it: pair only a profile you trust.' }),
-    el('label', {}, 'Relay', relay), el('label', {}, 'Backup code', code), next);
+    el('label', {}, 'Relay', relay), el('label', {}, 'Backup code', code), next,
+    Object.assign(el('button', { className: 'quiet', textContent: 'Diagnostics' }), { onclick: () => go('diagnostics') }));
 }
 
 async function renderMachine(st) {
@@ -82,7 +89,8 @@ function renderMain(st) {
   app.append(el('div', { className: 'navs' },
     nav('Session', 'session', s ? s.localId : 'none'),
     nav('Excluded sites', 'excluded', st.excluded.length ? `${st.excluded.length}` : 'none'),
-    nav('Saved scripts', 'scripts', pending ? `${pending} waiting for you` : st.scripts.length ? `${st.scripts.filter((x) => x.enabled).length} on` : 'none')),
+    nav('Saved scripts', 'scripts', pending ? `${pending} waiting for you` : st.scripts.length ? `${st.scripts.filter((x) => x.enabled).length} on` : 'none'),
+    nav('Diagnostics', 'diagnostics', '')),
     el('pre', { textContent: st.log.slice(-8).join('\n') || 'Nothing has happened yet.' }), clearButton('Clear everything'));
 }
 
@@ -123,6 +131,30 @@ function renderScripts(st) {
       el('details', {}, el('summary', { textContent: 'show the script' }), el('pre', { textContent: s.code }))));
   }
   app.append(list);
+}
+
+/** Everything a person can paste when it misbehaves in a browser we cannot
+ *  run ourselves. The popup's own half needs no background at all. */
+async function collectDiagnostics(background, failure) {
+  const ua = globalThis.navigator?.userAgent ?? 'unknown';
+  const d = {
+    browser: /Orion/i.test(ua) ? 'Orion' : /Firefox/.test(ua) ? 'Firefox' : /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari (WebKit)' : 'unknown',
+    userAgent: ua, extension: api.runtime.getManifest?.().version ?? '?', manifestVersion: api.runtime.getManifest?.().manifest_version ?? '?',
+    popupSees: { alarms: !!api.alarms, debugger: !!api.debugger, tabsExecuteScript: typeof api.tabs?.executeScript === 'function', scripting: !!api.scripting, storage: !!api.storage?.local, runtimeConnect: typeof api.runtime?.connect === 'function', promisesApi: !!globalThis.browser },
+  };
+  if (failure) d.backgroundError = failure.message;
+  d.background = background ?? 'no answer from the background — it is not running, or it failed while loading';
+  return d;
+}
+async function renderDiagnostics(st, failure = null) {
+  let bg = null;
+  if (st) { try { bg = await Promise.race([ask('diagnostics'), new Promise((_, rej) => setTimeout(() => rej(new Error('no answer in 5 s')), 5000))]); } catch (e) { failure = failure ?? e; } }
+  const text = JSON.stringify(await collectDiagnostics(bg, failure), null, 2);
+  const pre = el('pre', { textContent: text });
+  const copy = el('button', { textContent: 'Copy' });
+  copy.onclick = async () => { try { await navigator.clipboard.writeText(text); copy.textContent = 'Copied'; } catch { const r = document.createRange(); r.selectNodeContents(pre); getSelection().removeAllRanges(); getSelection().addRange(r); copy.textContent = 'Select and copy'; } };
+  app.append(st ? header('Diagnostics', true) : el('h1', { textContent: 'Diagnostics' }),
+    el('p', { textContent: 'What this browser gives the extension, and what the extension has stored — no secrets. Copy it and send it to whoever is helping you.' }), copy, pre);
 }
 
 function clearButton(label) {

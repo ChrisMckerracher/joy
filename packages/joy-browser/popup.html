@@ -26,6 +26,7 @@
   details summary { cursor: pointer; font-size: 11px; color: var(--dim); }
   pre { margin: 0; font: 11px/1.4 ui-monospace, Menlo, monospace; color: var(--dim); background: var(--card); border-radius: 8px; padding: 8px; max-height: 130px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
   li pre { background: var(--bg); margin-top: 4px; }
+  #app > pre { max-height: 360px; user-select: text; -webkit-user-select: text; }
   /* A phone (Orion, Kagi's iOS browser, opens popups as a sheet): fill it, and keep inputs at 16px so iOS does not zoom. */
   @media (pointer: coarse) {
     body { width: auto; font-size: 15px; } main { padding: 16px; gap: 14px; }
