@@ -8,7 +8,7 @@ const { sealV2Json, sealText } = await import('../src/crypto.js');
 const { browserMessage, displaySegments, extractBrowserTags, browserMessageBody } = await import('../src/tags.js');
 
 const key = new Uint8Array(randomBytes(32));
-const rec = (seq, ev) => ({ seq, content: { ciphertext: sealV2Json({ v: 1, t: 'record', record: { role: 'agent', content: { type: 'event', data: { ev } } } }, key) } });
+const rec = (seq, ev) => ({ seq, content: { ciphertext: sealV2Json({ v: 1, t: 'record', record: { role: 'session', content: { type: 'session', data: { role: 'agent', ev } }, meta: { sentFrom: 'joy' } } }, key) } });
 const prompt = (seq, text) => ({ seq, kind: 'turn.queued', content: { ciphertext: sealText(text, key) } });
 
 test('a conversation folds to what a person wants to read', () => {

@@ -8,7 +8,7 @@ const { sealV2Json, sealText, openPayload } = await import('../src/crypto.js');
 
 const key = new Uint8Array(randomBytes(32));
 const TAG = (code) => `<joy-browser-execute>\n${code}\n</joy-browser-execute>`;
-const agentText = (seq, text, extra = {}) => ({ seq, kind: 'output', content: { ciphertext: sealV2Json({ v: 1, t: 'record', record: { role: 'agent', content: { type: 'event', data: { ev: { t: 'text', text, ...extra } } } } }, key) } });
+const agentText = (seq, text, extra = {}) => ({ seq, kind: 'output', content: { ciphertext: sealV2Json({ v: 1, t: 'record', record: { role: 'session', content: { type: 'session', data: { role: 'agent', ev: { t: 'text', text, ...extra } } }, meta: { sentFrom: 'joy' } } }, key) } });
 const userPrompt = (seq, text) => ({ seq, kind: 'turn.queued', content: { ciphertext: sealText(text, key) } });
 const mirroredUser = (seq, text) => ({ seq, kind: 'output', content: { ciphertext: sealV2Json({ v: 1, t: 'record', record: { role: 'user', content: { type: 'text', text } } }, key) } });
 const legacyPlain = (seq, text) => ({ seq, kind: 'output', content: { ciphertext: sealText(text, key) } });
@@ -189,4 +189,18 @@ test('malformed or non-agent records never execute', () => {
   for (const record of [null, {}, { role: 'tool', content: { data: { ev: { t: 'text', text: TAG('bad') } } } }]) {
     assert.equal(agentTextOf({ kind: 'output', content: { ciphertext: sealV2Json({ v: 1, t: 'record', record }, key) } }, key), null);
   }
+});
+
+// The record the daemon REALLY writes (verbatim from session c9dd2294, 2026-09-18).
+// The test helpers used to fake a flatter shape; the watcher matched the fake and
+// silently ignored every real tag while the panel, a looser reader, showed them.
+test('the daemon\'s own wrapper is read: role session, data.role agent', () => {
+  const real = { role: 'session', content: { type: 'session', data: { id: 'b656817f-fd42-45cc-91ec-f1cbbbc03191', time: 1789747893910, role: 'agent', turn: '2e936769-a050-43fe-b077-b0d00df92b5f', ev: { t: 'text', text: "<joy-browser-execute>\nconsole.log('hello from Claude');\n'logged: ' + document.title;\n</joy-browser-execute>" }, claudeUuid: 'b656817f-fd42-45cc-91ec-f1cbbbc03191' } }, meta: { sentFrom: 'joy' } };
+  const ev = { seq: 33, kind: 'output', content: { ciphertext: sealV2Json({ v: 1, t: 'record', record: real }, key) } };
+  assert.match(agentTextOf(ev, key), /^<joy-browser-execute>/);
+  // the flat shape stays accepted; a user's text and an agent thought do not
+  const flat = { ...ev, content: { ciphertext: sealV2Json({ v: 1, t: 'record', record: { role: 'agent', content: { type: 'event', data: { ev: { t: 'text', text: 'flat' } } } } }, key) } };
+  assert.equal(agentTextOf(flat, key), 'flat');
+  const user = { ...ev, content: { ciphertext: sealV2Json({ v: 1, t: 'record', record: { role: 'session', content: { type: 'session', data: { role: 'user', ev: { t: 'text', text: 'not me' } } } } }, key) } };
+  assert.equal(agentTextOf(user, key), null);
 });

@@ -47,7 +47,7 @@ describe('joy-browser end to end', () => {
     const offer = relay.offerFor(await d.claim('work'), sessionId);
     await d.received(offer.deliveryId); await d.submitted(first.json.turnId);
     await d.start(first.json.turnId, { runtimeEventId: randomUUID() });
-    const record = (text, extra = {}) => N.sealV2Json({ v: 1, t: 'record', record: { role: 'agent', content: { type: 'event', data: { ev: { t: 'text', text, ...extra }, turn: first.json.turnId } } } }, sessionKey);
+    const record = (text, extra = {}) => N.sealV2Json({ v: 1, t: 'record', record: { role: 'session', content: { type: 'session', data: { role: 'agent', turn: first.json.turnId, ev: { t: 'text', text, ...extra } } }, meta: { sentFrom: 'joy' } } }, sessionKey);
     const emit = (text, extra) => d.fact(first.json.turnId, { type: 'output', ciphertext: record(text, extra), runtimeEventId: randomUUID() });
     expect((await emit('<joy-browser-execute>\nreturn "said BEFORE the browser attached";\n</joy-browser-execute>')).status).toBe(200);
 

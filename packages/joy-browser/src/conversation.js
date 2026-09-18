@@ -5,6 +5,7 @@
 // and so is the answer the extension sent back for it.
 import { openPayload } from './crypto.js';
 import { displaySegments, browserMessageBody } from './tags.js';
+import { agentEventOf } from './watcher.js';
 
 /** One event → zero or one row, plus what it says about the turn. */
 /** One of OUR messages to the agent. The attach notice is not an answer to
@@ -36,8 +37,8 @@ export function rowOf(event, key) {
     const ours = browserMessageBody(text);
     return ours !== null ? browserRow(seq, ours) : { seq, role: 'user', text };
   }
-  const ev = rec.content?.data?.ev;
-  if (!ev || typeof ev !== 'object') return null;
+  const ev = agentEventOf(rec); // the same reader the watcher trusts: what is shown as the agent IS the agent
+  if (!ev) return null;
   if (ev.t === 'text' && typeof ev.text === 'string' && !ev.thinking) {
     const segments = displaySegments(ev.text);
     return segments.length ? { seq, role: 'agent', segments } : null;

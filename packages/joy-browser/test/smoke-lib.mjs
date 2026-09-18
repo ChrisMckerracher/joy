@@ -76,7 +76,7 @@ export async function startWorld() {
     await api('POST', `/daemon/turns/${offer.turnId}/start`, { runtimeEventId: randomUUID() }, L);
     return { turnId: offer.turnId, text: N.openPayload(offer.ciphertext ?? offer.content?.ciphertext, sessionKey)?.text };
   };
-  const say = (turnId, text) => api('POST', `/daemon/turns/${turnId}/facts`, { type: 'output', runtimeEventId: randomUUID(), ciphertext: N.sealV2Json({ v: 1, t: 'record', record: { role: 'agent', content: { type: 'event', data: { ev: { t: 'text', text }, turn: turnId } } } }, sessionKey) }, L);
+  const say = (turnId, text) => api('POST', `/daemon/turns/${turnId}/facts`, { type: 'output', runtimeEventId: randomUUID(), ciphertext: N.sealV2Json({ v: 1, t: 'record', record: { role: 'session', content: { type: 'session', data: { id: randomUUID(), time: Date.now(), role: 'agent', turn: turnId, ev: { t: 'text', text } } }, meta: { sentFrom: 'joy' } } }, sessionKey) }, L);
   const endTurn = (turnId) => api('POST', `/daemon/turns/${turnId}/facts`, { type: 'terminal', terminalState: 'completed', runtimeEventId: randomUUID() }, L);
   /** One agent turn: say this, end the turn, and hand back the browser's answer. */
   const agentTurn = async (turnId, text, what) => { await say(turnId, text); await endTurn(turnId); return takePrompt(what); };

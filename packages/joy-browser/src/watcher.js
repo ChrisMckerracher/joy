@@ -22,9 +22,20 @@ import { extractBrowserTags, describeResult, browserMessage } from './tags.js';
 export function agentTextOf(event, key) {
   if (!event?.content || event.kind === 'turn.queued') return null;
   const p = openPayload(event.content.ciphertext, key);
-  if (!p || p.t !== 'record' || p.record?.role !== 'agent') return null;
-  const ev = p.record.content?.data?.ev;
+  if (!p || p.t !== 'record') return null;
+  const ev = agentEventOf(p.record);
   return ev && ev.t === 'text' && typeof ev.text === 'string' && !ev.thinking ? ev.text : null;
+}
+
+/** The agent's event inside a wire record, or null for anything else. The
+ *  daemon wraps agent events as { role: 'session', content: { type: 'session',
+ *  data: { role: 'agent', ev } } }; a flat { role: 'agent', content: { data: { ev } } }
+ *  is accepted too. A user's mirrored text ({ role: 'user' }) is never the agent. */
+export function agentEventOf(rec) {
+  if (!rec || typeof rec !== 'object') return null;
+  const data = rec.content?.data;
+  const fromAgent = rec.role === 'agent' || (rec.role === 'session' && rec.content?.type === 'session' && data?.role === 'agent');
+  return fromAgent && data?.ev && typeof data.ev === 'object' ? data.ev : null;
 }
 
 export class Watcher {

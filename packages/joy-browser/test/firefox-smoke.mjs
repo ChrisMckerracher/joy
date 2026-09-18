@@ -53,6 +53,7 @@ async function main() {
   const popupWin = await until('the popup tab', async () => (await S('GET', '/window/handles')).find((h) => !before.includes(h)));
   await S('POST', '/window', { handle: popupWin });
   const popupText = () => js('return document.body.innerText');
+  const onMain = () => until('the main page', () => js(`return document.querySelector('h1')?.textContent === 'Joy Browser'`)); // by title: other pages mention the same words
   const press = (label) => js(`const b = [...document.querySelectorAll('button')].find((n) => n.textContent.includes(arguments[0])); if (!b) throw new Error('no button: ' + arguments[0] + ' in: ' + document.body.innerText); b.click();`, label);
   await until('the pairing form', () => js(`return !!document.querySelector('input[type=password]')`));
   await js(`const [relay, code] = document.querySelectorAll('input'); relay.value = arguments[0]; code.value = arguments[1];`, relayUrl, backupCode);
@@ -101,7 +102,7 @@ async function main() {
 
   // ── the brakes ──
   await S('POST', '/window', { handle: popupWin });
-  await press('Back'); await until('the main page', async () => (await popupText()).includes('Excluded sites'));
+  await press('Back'); await onMain();
   await press('Excluded sites'); await until('the excluded-sites page', () => js(`return !!document.querySelector('input[type=text]')`));
   await js(`document.querySelector('input[type=text]').value = '127.0.0.1'`);
   await press('Add');
@@ -118,7 +119,7 @@ async function main() {
   if (listed.text.includes('127.0.0.1')) throw new Error(`an excluded tab was reported:\n${listed.text}`);
   step('excluded site: button gone, saved script silent, the agent is refused and the tab is not listed');
   await S('POST', '/window', { handle: popupWin });
-  await press('Back'); await until('the main page', async () => (await popupText()).includes('Pause'));
+  await press('Back'); await onMain();
   await press('Pause');
   const paused = await agentTurn(listed.turnId, '<joy-browser-execute>\nreturn 1;\n</joy-browser-execute>', 'the paused refusal');
   if (!/status: error/.test(paused.text) || !/paused browser control/.test(paused.text)) throw new Error(`expected a paused refusal, got:\n${paused.text}`);
