@@ -32,6 +32,7 @@ export default function Root({ children }: { children: React.ReactNode }) {
 
         {/* Using raw CSS styles as an escape-hatch to ensure the background color never flickers in dark-mode. */}
         <style dangerouslySetInnerHTML={{ __html: responsiveBackground }} />
+        <style dangerouslySetInnerHTML={{ __html: buttonsAreNotText }} />
         {/* Add any additional <head> elements that you want globally available on web... */}
       </head>
       <body>{children}</body>
@@ -47,4 +48,24 @@ body {
   body {
     background-color: #000;
   }
+}`;
+
+// A mouse dragging across a button — an option chip, Approve, the queue's
+// Send, the send arrow itself — must press it, not paint its label blue.
+// react-native-web renders every Pressable and Touchable as a <div> carrying a
+// tabindex and nothing else that marks it, while message bodies are plain
+// <div>/<span> trees with no tabindex and no button inside them, so this
+// reaches the buttons and leaves the chat selectable. Only tabindex 0: a
+// disabled button gets -1, and so would any view marked unfocusable, which
+// could hold content. Form fields inside a button row (the queue's editable
+// text) keep their own selection.
+const buttonsAreNotText = `
+[role="button"], [role="button"] *,
+div[tabindex="0"], div[tabindex="0"] * {
+  -webkit-user-select: none;
+  user-select: none;
+}
+input, textarea, [contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
 }`;
