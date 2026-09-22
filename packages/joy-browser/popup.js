@@ -101,10 +101,21 @@ function renderSession(st) {
   const fresh = el('button', { className: 'quiet', textContent: `Start a fresh session on ${st.machineName ?? 'the machine'}` });
   fresh.onclick = async () => { busy(fresh, 'Starting…'); try { await ask('newSession'); go('main'); } catch (e) { fail(e); } };
   app.append(header('Session', true),
-    el('p', { textContent: st.linked ? `This browser is linked to ${st.linked.localId}${st.linked.title ? ` — ${st.linked.title}` : ''}. It stays linked until you change it here or clear everything.` : 'No session is linked.' }),
-    el('label', {}, 'Connect to a specific session instead', ref), connect,
+    el('p', { textContent: st.linked ? `This browser is linked to ${st.linked.localId}${st.linked.title ? ` — ${st.linked.title}` : ''}. It stays linked until you change it here or clear everything.` : 'No session is linked.' }));
+  const recent = st.recent.filter((r) => r.sessionId !== st.linked?.sessionId);
+  if (recent.length) {
+    const list = el('ul');
+    for (const r of recent) {
+      const back = el('button', { className: 'sm', textContent: 'Connect' });
+      back.onclick = async () => { busy(back, '…'); try { await ask('connect', { ref: r.sessionId }); flash = { text: `Connected to ${r.localId}.` }; go('main'); } catch (e) { fail(e); } };
+      list.append(el('li', { className: 'row' }, el('div', { className: 'l' }, el('div', { className: 't', textContent: r.title ?? `session ${r.localId}` }), el('div', { className: 's', textContent: `${r.localId}${r.machine ? ` · ${r.machine}` : ''} · ${ago(r.at)}` })), back));
+    }
+    app.append(el('label', {}, 'Sessions this browser used before'), list);
+  }
+  app.append(el('label', {}, 'Connect to a specific session', ref), connect,
     el('p', { textContent: 'Use the id the app and `joy ls` show. The session is told a browser attached; only what its agent says from then on can run here.' }), fresh);
 }
+const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
 
 function renderExcluded(st) {
   const input = el('input', { type: 'text', placeholder: 'bank.com   or   example.com/account/*', autocomplete: 'off' });

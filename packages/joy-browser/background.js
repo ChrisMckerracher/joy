@@ -37,6 +37,7 @@ const wire = (what, fn) => { try { fn(); } catch (e) { startupErrors.push(`${wha
 // matters lives only in memory:
 //   setup    { relayUrl, secret (b64), machineId, machineName, cwd }
 //   linked   { sessionId, token, localId, title, envelope } | null     cursor  number
+//   recent   [{ sessionId, localId, title, machine, at }]  — newest first, the linked one included; Settings → Session offers them back
 //   pendingSpawn { id, machineId, wire, relayId?, retried? } | null
 //   pendingResult { id, ciphertext } | null   — delivery retries never rerun code
 //   paused   boolean          excluded [pattern]          fab { x, y }
@@ -349,6 +350,8 @@ async function link(row, { announce, gen = epoch }) {
   const st = await c.relay.sessionState(row.sessionId); current(gen);
   if (!Number.isSafeInteger(Number(st.headSeq)) || Number(st.headSeq) < 0) throw new Error('the relay returned an invalid session cursor');
   await set({ linked, cursor: Number(st.headSeq), pendingResult, pendingSpawn: null, linkError: null, relayError: null }, gen);
+  // Remember it, so a later switch can come straight back without the id.
+  await change(['recent', 'setup'], (s) => ({ recent: [{ sessionId: linked.sessionId, localId: linked.localId, title: linked.title, machine: meta?.host ?? s.setup?.machineName ?? null, at: Date.now() }, ...(s.recent ?? []).filter((r) => r.sessionId !== linked.sessionId)].slice(0, 8) }), gen);
   stopWatching();
   await log(`linked to session ${linked.localId}${linked.title ? ` — ${linked.title}` : ''}`, gen);
   await ensureWatching(); await loadConversation(); await broadcastMeta();
@@ -468,13 +471,13 @@ async function machinesView() {
 
 const handlers = {
   async status() {
-    const s = await get(['setup', 'linked', 'paused', 'excluded', 'scripts', 'linkError', 'relayError', 'log', 'draft']);
+    const s = await get(['setup', 'linked', 'paused', 'excluded', 'scripts', 'linkError', 'relayError', 'log', 'draft', 'recent']);
     return {
       stage: !s.setup?.secret ? 'pair' : !s.setup?.machineId ? 'machine' : 'ready',
       relayUrl: s.setup?.relayUrl ?? null, machineName: s.setup?.machineName ?? null, cwd: s.setup?.cwd ?? null,
       linked: s.linked ?? null, starting: !!spawning, linkError: s.linkError ?? s.relayError ?? null, paused: !!s.paused,
       excluded: s.excluded ?? [], scripts: (s.scripts ?? []).map(({ id, revision, name, match, code, enabled, approved }) => ({ id, revision, name, match, code, enabled, approved })),
-      log: s.log ?? [], defaultFolder: DEFAULT_FOLDER, draft: s.draft ?? null,
+      log: s.log ?? [], defaultFolder: DEFAULT_FOLDER, draft: s.draft ?? null, recent: s.recent ?? [],
     };
   },
   /** Step one: prove the relay and the code, keep them, and say which machines there are. */

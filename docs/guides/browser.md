@@ -46,7 +46,7 @@ Add a site by typing it in, or press **Hide on this site** in the chat panel. `b
 
 ## Use a different session
 
-**Settings → Session** links the browser to a session you already have. Enter the id the app and `joy ls` show, and press **Connect**. The session is told a browser attached. **Start a fresh session** replaces the linked session with a new one.
+**Settings → Session** links the browser to a session you already have. The sessions this browser used before are listed there with a **Connect** button, so switching back needs no id. For any other session, enter the id the app and `joy ls` show, and press **Connect**. The session is told a browser attached. **Start a fresh session** replaces the linked session with a new one.
 
 ## What is safe and what is not
 

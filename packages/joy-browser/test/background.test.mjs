@@ -186,3 +186,14 @@ test('clear wins even if a settings write was already inside the storage API', a
   await writing.promise; const clear = r.handlers.clear(); release.resolve(); await clear; await pause;
   assert.deepEqual(r.data, {}, 'no late diagnostic write resurrects cleared data');
 });
+
+test('every link is remembered, newest first and without repeats, so Settings can offer it back', async () => {
+  const sessions = [{ sessionId: 's', localSessionId: 'abcd', sessionKeyEnvelope: 'opaque' }, { sessionId: 'new', localSessionId: 'fresh', sessionKeyEnvelope: 'opaque' }];
+  const r = await rig({ setup }, { relay: { listSessions: async () => ({ sessions }) } });
+  await r.handlers.connect({ ref: 'abcd' });
+  await r.handlers.connect({ ref: 'fresh' });
+  await r.handlers.connect({ ref: 'abcd' });
+  assert.deepEqual(r.data.recent.map((x) => x.sessionId), ['s', 'new']);
+  assert.equal(r.data.recent[0].localId, 'abcd'); assert.equal(r.data.recent[0].machine, 'machine'); assert.ok(r.data.recent[0].at > 0);
+  assert.deepEqual((await r.handlers.status()).recent.map((x) => x.sessionId), ['s', 'new']);
+});
