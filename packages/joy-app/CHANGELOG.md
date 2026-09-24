@@ -1,3 +1,7 @@
+# Sep 24 (2) — Dragging across a button no longer selects its text
+
+- **On desktop and the web, a mouse drag over a button presses it instead of painting the label blue.** Option chips, Approve and Deny, the queue's buttons and the send arrow all behaved like a paragraph of text when the pointer moved while the mouse was down. Message text stays selectable, and so does anything you can type into.
+
 # Sep 24 — The chat stops jumping when a reply lands
 
 - **A finished reply no longer yanks the view.** The moment an agent finished, the tool calls it had shown while working were folded into one "agent work" row, and the rows you were looking at vanished from above the newest message, taking the list's anchor with them. The latest turn now stays unfolded until your next prompt; it folds then, together with your new message, where the view is moving anyway. Sessions opened at rest look as they did.
