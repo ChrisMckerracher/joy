@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { isFollowInteracting, performBottomFollow, shouldFollowBottom, updateFollowScroll, type FollowInput, type FollowScrollState } from './chatFollow';
+import { isFollowInteracting, performBottomFollow, shouldFollowBottom, updateFollowScroll, type FollowInput, type FollowScrollState, heldOpenTurn } from './chatFollow';
 
 const live: FollowInput = { loaded: true, restoring: false, nearBottom: true, interacting: false };
 
@@ -309,5 +309,19 @@ describe('scroll events feeding bottom follow', () => {
         expect(sequence.follows()).toBe(true);
         sequence.scroll(0, 600);
         expect(sequence.follows()).toBe(true);
+    });
+});
+
+describe('heldOpenTurn', () => {
+    it('holds the turn that is thinking, and keeps holding it after the turn ends', () => {
+        expect(heldOpenTurn(null, true, 'p1')).toBe('p1');
+        expect(heldOpenTurn('p1', false, 'p1')).toBe('p1');
+    });
+    it('lets go when the next prompt arrives, or when nothing was ever held', () => {
+        expect(heldOpenTurn('p1', false, 'p2')).toBeNull();
+        expect(heldOpenTurn(null, false, 'p1')).toBeNull();
+    });
+    it('moves the hold to the new turn when it starts thinking', () => {
+        expect(heldOpenTurn('p1', true, 'p2')).toBe('p2');
     });
 });

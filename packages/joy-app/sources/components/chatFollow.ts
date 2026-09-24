@@ -107,3 +107,18 @@ export function updateFollowScroll(
     }
     return { offset, distanceFromBottom, nearBottom };
 }
+
+/**
+ * Which turn's agent work stays unfolded. While the agent works, its tool
+ * calls show as rows; folding them into one "agent work" group the instant
+ * the turn ends removed the rows a reader was looking at and, with them, the
+ * anchor the list held the viewport on — "it jumps when a new message comes
+ * in". So the latest turn is held open from the moment it starts thinking
+ * until the NEXT prompt arrives; the fold then lands in the same commit as
+ * the new row, where the follow is already moving the viewport. A session
+ * opened at rest (nothing thinking) folds its last turn as before.
+ */
+export function heldOpenTurn(held: string | null, thinking: boolean, latestPromptId: string | null): string | null {
+    if (thinking) return latestPromptId;
+    return held === latestPromptId ? held : null;
+}

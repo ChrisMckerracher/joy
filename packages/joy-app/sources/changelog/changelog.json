@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "title": "Sep 24 — The chat stops jumping when a reply lands",
+      "summary": "",
+      "markdown": "- **A finished reply no longer yanks the view.** The moment an agent finished, the tool calls it had shown while working were folded into one \"agent work\" row, and the rows you were looking at vanished from above the newest message, taking the list's anchor with them. The latest turn now stays unfolded until your next prompt; it folds then, together with your new message, where the view is moving anyway. Sessions opened at rest look as they did.\n- **Tapping into the message box no longer shifts the chat.** When the area holding the chat changes height — the box growing to a second line, the keyboard on Android — the list now re-pins its bottom in the same layout pass instead of letting the rows slide and snapping them back a moment later."
+    },
+    {
       "title": "Sep 18 (2) — Archived sessions stop claiming to be \"seen just now\"",
       "summary": "",
       "markdown": "- **An archived, detached or failed session now reads as offline, with its real last-seen time.** Every finished session on a running machine used to say \"last seen just now\", refreshed on every poll, because \"online\" only asked whether the machine's daemon was alive — not whether the session still had a process behind it. Now both have to be true. Sessions that ended show when their last turn really ran. The relay applies the same rule, so the MCP server and the app agree."
@@ -521,5 +526,5 @@
       "markdown": "- E2E encrypted sessions.\n- Voice assistant.\n- File manager with syntax highlighting.\n- Real-time sync across devices."
     }
   ],
-  "latestTitle": "Sep 18 (2) — Archived sessions stop claiming to be \"seen just now\""
+  "latestTitle": "Sep 24 — The chat stops jumping when a reply lands"
 }

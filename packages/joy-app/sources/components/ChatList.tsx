@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useSession, useSessionMessages, useSetting, useUnopenableGaps } from "@/sync/storage";
 import { sync } from '@/sync/sync';
 import { projectUnopenableGapRows } from '@/sync/unopenableGapRows';
-import { ActivityIndicator, AppState, InteractionManager, NativeScrollEvent, NativeSyntheticEvent, Platform, Pressable, View } from 'react-native';
+import { ActivityIndicator, AppState, InteractionManager, type LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, Platform, Pressable, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import { useCallback } from 'react';
@@ -19,7 +19,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { alertError, guarded } from '@/utils/guardAsync';
 import { resolveRevealScroll, rowContainsMessage, RevealLayout, RevealTarget } from './searchReveal';
 import { useSessionSearch } from '@/hooks/useSessionSearch';
-import { performBottomFollow, isFollowInteracting, updateFollowScroll, type FollowScrollState } from './chatFollow';
+import { performBottomFollow, isFollowInteracting, updateFollowScroll, heldOpenTurn, type FollowScrollState } from './chatFollow';
 
 const SCROLL_THRESHOLD = 300;
 
@@ -182,7 +182,15 @@ const ChatListInternal = React.memo(React.forwardRef<ChatListHandle, {
     const hasPendingPermission = Boolean(
         session?.agentState?.requests && Object.keys(session.agentState.requests).length > 0,
     );
-    const collapseCurrentTurn = session?.thinking !== true && !hasPendingPermission;
+    // The latest turn stays unfolded from the moment it starts thinking until
+    // the next prompt arrives — folding it the instant the turn ended pulled
+    // the rows out from under the viewport (chatFollow.ts, heldOpenTurn).
+    const latestPromptId = React.useMemo(() => props.messages.find((m) => m.kind === 'user-text')?.id ?? null, [props.messages]);
+    const [heldOpen, setHeldOpen] = React.useState<string | null>(null);
+    React.useEffect(() => {
+        setHeldOpen((held) => heldOpenTurn(held, session?.thinking === true, latestPromptId));
+    }, [session?.thinking, latestPromptId]);
+    const collapseCurrentTurn = session?.thinking !== true && !hasPendingPermission && heldOpen !== latestPromptId;
     const groupingOptions = React.useMemo(
         () => ({ collapseCurrentTurn }),
         [collapseCurrentTurn],
@@ -714,6 +722,18 @@ const ChatListInternal = React.memo(React.forwardRef<ChatListHandle, {
         return () => cancelAnimationFrame(id);
     }, [orderedItems, followBottom]);
     const handleContentSizeChange = useCallback(() => { followBottom(); }, [followBottom]);
+    // The list's own height changes too: the composer growing to a second
+    // line, the Android keyboard padding the screen. A non-inverted list keeps
+    // its offset through a relayout, so the bottom rows would slide out of
+    // view and the next data follow would snap them back — re-pin now, in the
+    // layout pass itself, while the reader is live.
+    const layoutHeightRef = React.useRef<number | null>(null);
+    const handleLayout = useCallback((e: LayoutChangeEvent) => {
+        const h = e.nativeEvent.layout.height;
+        const changed = layoutHeightRef.current !== null && layoutHeightRef.current !== h;
+        layoutHeightRef.current = h;
+        if (changed) followBottom();
+    }, [followBottom]);
 
     // Retained-screen path: capture on blur, restore on refocus. The first
     // focus of a mount is skipped — onLoad owns that one (the list may not
@@ -873,6 +893,7 @@ const ChatListInternal = React.memo(React.forwardRef<ChatListHandle, {
                 onMomentumScrollBegin={handleMomentumBegin}
                 onMomentumScrollEnd={handleMomentumEnd}
                 onContentSizeChange={handleContentSizeChange}
+                onLayout={handleLayout}
                 onLoad={handleLoad}
                 scrollEventThrottle={16}
                 onViewableItemsChanged={handleViewableItemsChanged}
