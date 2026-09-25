@@ -41,10 +41,6 @@ The OpenAPI document covers both. Two useful routes:
 - `GET /sessions/:id/check` answers whether a session is idle, busy, waiting on input, or ended, and what it is waiting on.
 - `GET /sessions/:id/events?follow=1` streams the session's records as newline-delimited JSON. The first line is `{ "hello": true, "seq": <n> }`; each later line is `{ "seq", "at", "record" }`. Add `after=<seq>` to resume or `last=<n>` to start with the most recent records.
 
-### Pocket TTS speech
-
-`POST /v2/voice/speech` takes JSON `{ "text": "Hello", "voice": "alba" }` and returns `audio/wav`. It requires daemon authentication (or the sealed machine tunnel), accepts at most 500 characters and a built-in voice name, and uses the daemon's `JOY_POCKET_TTS_URL` loopback service. Responses are not cached. Invalid input returns 400, concurrent synthesis 429, invalid upstream audio 502, and missing configuration/unavailable service/timeout 503, each with a JSON `error` message. See [Voice setup and limits](../guides/voice.md).
-
 ### Reaching a daemon from elsewhere
 
 The daemon never listens on a public interface. Your devices reach it through the relay: the app seals each request with the machine's key, the relay forwards the sealed bytes to the daemon's connection, and the daemon unseals it and runs it against its local API. The relay cannot read or change these requests. The MCP server uses the same path.

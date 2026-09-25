@@ -1,12 +1,12 @@
 // Pocket TTS reads notifications; it never records audio or executes commands.
 import { storage } from '@/sync/storage';
-import { sync } from '@/sync/sync';
-import { tunnelFetch } from '@/sync/v2/tunnel';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { voiceHooks } from './hooks/voiceHooks';
 import { createSpeechOutput } from './speechOutput';
 import { SpeechQueue, type SpeechItem } from './speechQueue';
+import { createPocketSpeech } from './pocket/speech';
+import { resetPocketProgress } from './pocket/progress';
 
 let queue: SpeechQueue | null = null;
 let currentSessionId: string | null = null;
@@ -21,28 +21,20 @@ export function speakSessionUpdate(sessionId: string, item: SpeechItem) {
 export async function startVoice(sessionId: string): Promise<boolean> {
     if (queue && currentSessionId === sessionId) return true;
     endVoice();
-    // Unlock browser audio directly in the user gesture, before network awaits.
-    const ctx = sync.machineCtx(sessionId);
-    if (!ctx) { Modal.alert(t('common.error'), t('pocketVoice.noMachine')); return false; }
+    // Unlock browser audio directly in the user gesture, before model loading.
     const output = createSpeechOutput();
+    const speech = createPocketSpeech();
     const voice = storage.getState().settings.pocketTtsVoice;
+    resetPocketProgress(voice);
     currentSessionId = sessionId;
     const state = storage.getState();
     state.setVoiceArmedSessionId(sessionId);
     state.setRealtimeStatus('connecting');
-    const ownQueue = new SpeechQueue(async (text, signal) => {
-        const response = await tunnelFetch({
-            ...ctx, method: 'POST', path: '/v2/voice/speech', signal,
-            headers: { 'content-type': 'application/json' },
-            body: new TextEncoder().encode(JSON.stringify({ text, voice })),
-        });
-        if (response.status !== 200) {
-            let message = t('pocketVoice.unavailable');
-            try { message = JSON.parse(new TextDecoder().decode(response.body)).error || message; } catch { /* older daemon */ }
-            throw new Error(message);
-        }
-        return response.body;
-    }, output, speaking => {
+    const ownQueue = new SpeechQueue((text, signal) => speech.generate(text, signal), {
+        prepare: () => output.prepare(),
+        play: (wav, signal) => output.play(wav, signal),
+        dispose: () => { output.dispose(); speech.dispose(); },
+    }, speaking => {
         if (queue === ownQueue) storage.getState().setRealtimeMode(speaking ? 'agent-speaking' : 'idle', true);
     }, error => {
         if (queue !== ownQueue) return;
@@ -54,6 +46,8 @@ export async function startVoice(sessionId: string): Promise<boolean> {
     queue = ownQueue;
     try {
         await output.prepare();
+        if (queue !== ownQueue) return false;
+        await speech.prepare(voice);
         if (queue !== ownQueue) return false;
         voiceHooks.onVoiceStarted(sessionId);
         state.setRealtimeStatus('connected');

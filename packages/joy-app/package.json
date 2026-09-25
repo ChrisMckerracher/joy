@@ -30,7 +30,7 @@
     "ota:production": "npx eas-cli@latest workflow:run ota.yaml",
     "typecheck": "tsc --noEmit",
     "lint:promises": "tsx sources/scripts/checkFloatingPromises.ts",
-    "postinstall": "setup-skia-web public",
+    "postinstall": "setup-skia-web public && node scripts/prepare-pocket.cjs",
     "generate-theme": "tsx sources/theme.gen.ts",
     "// ==== Development/Preview/Production Variants ====": "echo comment",
     "ios:dev": "cross-env APP_ENV=development expo run:ios",
@@ -52,13 +52,14 @@
     "tauri:build:preview": "tauri build --config src-tauri/tauri.preview.conf.json",
     "tauri:build:production": "tauri build",
     "tauri:joy": "tauri dev --config src-tauri/tauri.joy.conf.json",
-    "tauri:build:joy": "tauri build --config src-tauri/tauri.joy.conf.json"
+    "tauri:build:joy": "tauri build --config src-tauri/tauri.joy.conf.json",
+    "pocket:prepare": "node scripts/prepare-pocket.cjs"
   },
   "jest": {
     "preset": "jest-expo"
   },
   "dependencies": {
-        "expo-audio": "55.0.9",
+    "expo-audio": "55.0.9",
     "@expo/ui": "~55.0.5",
     "@expo/vector-icons": "^15.0.2",
     "@legendapp/list": "2.0.0-beta.3",
@@ -169,7 +170,9 @@
     "uuid": "^11.1.0",
     "vitest": "^3.2.4",
     "zod": "^4.0.0",
-    "zustand": "^5.0.6"
+    "zustand": "^5.0.6",
+    "onnxruntime-web": "1.24.3",
+    "onnxruntime-react-native": "1.24.3"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

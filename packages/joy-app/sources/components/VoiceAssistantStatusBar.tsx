@@ -8,6 +8,7 @@ import { endVoice, startVoice } from '@/realtime/RealtimeSession';
 import { useUnistyles } from 'react-native-unistyles';
 import { VoiceBars } from './VoiceBars';
 import { t } from '@/text';
+import { usePocketProgress } from '@/realtime/pocket/progress';
 
 interface VoiceAssistantStatusBarProps {
     variant?: 'full' | 'sidebar';
@@ -19,6 +20,7 @@ export const VoiceAssistantStatusBar = React.memo(({ variant = 'full', style }: 
     const realtimeStatus = useRealtimeStatus();
     const realtimeMode = useRealtimeMode();
     const armedSessionId = useVoiceArmedSessionId();
+    const percent = usePocketProgress();
 
 
     if (realtimeStatus === 'disconnected' && armedSessionId === null) {
@@ -34,7 +36,7 @@ export const VoiceAssistantStatusBar = React.memo(({ variant = 'full', style }: 
     switch (realtimeStatus) {
         case 'connecting':
             color = theme.colors.status.connecting; pulsing = true;
-            text = t('voice.statusConnecting'); hint = '';
+            text = t('pocketVoice.loading', { percent }); hint = t('voice.tapToEnd');
             break;
         case 'connected':
             color = theme.colors.status.connected;
@@ -50,7 +52,7 @@ export const VoiceAssistantStatusBar = React.memo(({ variant = 'full', style }: 
     }
 
     const handlePress = () => {
-        if (realtimeStatus === 'connecting') return;
+        if (realtimeStatus === 'connecting') { endVoice(); return; }
         if (realtimeStatus === 'connected') { void endVoice(); return; }
         if (armedSessionId) void startVoice(armedSessionId);
     };

@@ -152,6 +152,7 @@ export default {
         },
         plugins: [
             require("./plugins/withEinkCompatibility.js"),
+            require("./plugins/withPocketRuntime.js"),
             [
                 "expo-router",
                 {
