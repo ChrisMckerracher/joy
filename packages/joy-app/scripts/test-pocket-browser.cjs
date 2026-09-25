@@ -27,18 +27,18 @@ document.querySelector('#go').onclick=async()=>{
  const started=performance.now();let c=client();
  try{
   await c.call('prepare',{voice:'alba'});const ready=performance.now();
-  let firstAudio=0,audioSeconds=0,chunks=0;
-  const playback=output.stream(new AbortController().signal,()=>{firstAudio=performance.now()});
-  const wav=await c.call('generate',{text:'Hello Chris. Pocket speech is running inside Joy.',stream:true},(pcm,rate)=>{
-   chunks++;audioSeconds+=pcm.length/rate;playback.push(pcm,rate);
-  });const generated=performance.now();
-  if(!firstAudio||firstAudio>=generated||wav.length||chunks<2)throw new Error('Expected incremental PCM before generation completed');
-  await playback.finish();const played=performance.now();
+  // Match Joy's session path: wait for complete synthesis, then play one buffer.
+  // Incremental decoder chunks can underrun and interrupt words on slow devices.
+  const wav=await c.call('generate',{text:'Hello Chris. Pocket speech is running inside Joy.'});
+  const generated=performance.now();
+  const decoded=await ctx.decodeAudioData(wav.slice().buffer);
+  const firstAudio=performance.now(),audioSeconds=decoded.duration;
+  await output.play(wav,new AbortController().signal);const played=performance.now();
   c.worker.terminate();await fetch('/deny-models');
   c=client();await c.call('prepare',{voice:'alba'});
   const second=await c.call('generate',{text:'The model is cached on this device.'});
   const cached=await ctx.decodeAudioData(second.buffer);
-  window.pocketResult={ok:true,loadSeconds:(ready-started)/1000,generationSeconds:(generated-ready)/1000,firstAudioSeconds:(firstAudio-ready)/1000,playbackFinishedSeconds:(played-ready)/1000,audioSeconds,chunks,cachedAudioSeconds:cached.duration,sampleRate:cached.sampleRate,crossOriginIsolated};
+  window.pocketResult={ok:true,loadSeconds:(ready-started)/1000,generationSeconds:(generated-ready)/1000,firstAudioSeconds:(firstAudio-ready)/1000,playbackFinishedSeconds:(played-ready)/1000,audioSeconds,cachedAudioSeconds:cached.duration,sampleRate:cached.sampleRate,crossOriginIsolated};
  }catch(e){window.pocketResult={ok:false,error:e.stack||String(e)}}finally{c.worker.terminate();output.dispose();await ctx.close();document.querySelector('#result').textContent=JSON.stringify(window.pocketResult)}
 };</script>`;
 const server=http.createServer((req,res)=>{

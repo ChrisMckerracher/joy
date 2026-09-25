@@ -22,7 +22,7 @@ Text remains on the device during speech synthesis. Only static model downloads 
 - Pending approvals announce the tool name without its arguments. Approvals answered before playback are discarded. Choice questions include their options; answer in the app.
 - Speech is serialized, bounded to eight queued clips and expires after 30 seconds if playback has not started. Stop cancels model loading, retires generation and prevents late audio from playing. Native inference already in progress is allowed to finish its current operation before releasing the engine.
 - Models are unloaded when speech stops or the app backgrounds. The next activation reloads cached files; it does not keep hundreds of megabytes resident while speech is disabled.
-- Generation is limited to 500 characters and 500 audio frames (about 40 seconds). Web playback streams PCM as it is generated, starting after the first decoder batch (normally 0.96 seconds of audio). Native playback still buffers each short clip into a WAV. Slow devices may introduce playback gaps if generation cannot keep up; latency and memory use need real-device validation.
+- Generation is limited to 500 characters and 500 audio frames (about 40 seconds). Both clients finish generating each short clip before starting playback. An earlier web streaming experiment was disabled after it inserted 64–171 ms gaps inside speech when inference fell behind the audio clock. Multi-threaded generation remains enabled; latency and memory use still need real-device validation.
 
 ## Building and testing the draft
 
@@ -52,6 +52,6 @@ node scripts/test-pocket.mjs /path/to/models /tmp/pocket.wav
 node scripts/test-pocket-browser.cjs /path/to/models
 ```
 
-The browser test uses an installed Chrome (`CHROME_BIN` can override the executable) and a temporary profile. It serves only the test assets on loopback, plays streamed PCM before synthesis finishes, records first-audio and total generation times, blocks model downloads, and verifies that a new worker can synthesize from its cache. It does not prove native-device behavior or subjective speech quality.
+The browser test uses an installed Chrome (`CHROME_BIN` can override the executable) and a temporary profile. It serves only the test assets on loopback, plays one complete generated clip, records playback-start and total generation times, blocks model downloads, and verifies that a new worker can synthesize from its cache. It does not prove native-device behavior or subjective speech quality.
 
-Set `POCKET_ISOLATED=0` to test the single-thread fallback, or `POCKET_BENCHMARK_SEED=1` for repeatable sampling noise. On the test VM, the same 3.12-second phrase took 4.84 seconds to synthesize with one thread and 3.73 seconds with four; streaming started playback after 1.37 seconds. These are warm-runtime generation timings, excluding model loading, and do not predict performance on the user's device.
+Set `POCKET_ISOLATED=0` to test the single-thread fallback, or `POCKET_BENCHMARK_SEED=1` for repeatable sampling noise. On the test VM, the same 3.12-second phrase took 4.84 seconds to synthesize with one thread and 3.73 seconds with four; experimental streaming started playback after 1.37 seconds but was not smooth. A longer 7.36-second clip reproduced six playback gaps, so session playback now waits for a complete clip. These are warm-runtime generation timings, excluding model loading, and do not predict performance on the user's device.

@@ -1,7 +1,7 @@
 import { beforeEach, expect, test, vi } from 'vitest';
 const m = vi.hoisted(() => ({
     generate: vi.fn(), prepare: vi.fn(async (_voice: string) => {}), dispose: vi.fn(), alert: vi.fn(), started: vi.fn(),
-    output: { prepare: vi.fn(async () => {}), play: vi.fn(async () => {}), dispose: vi.fn() },
+    output: { prepare: vi.fn(async () => {}), play: vi.fn(async () => {}), dispose: vi.fn(), stream: vi.fn() },
     state: { settings: { pocketTtsVoice: 'alba' }, realtimeStatus: 'disconnected', voiceArmedSessionId: null as string | null,
         setRealtimeStatus: vi.fn(), setVoiceArmedSessionId: vi.fn(), setRealtimeMode: vi.fn(), clearRealtimeModeDebounce: vi.fn() },
 }));
@@ -33,6 +33,16 @@ test('closing during synthesis suppresses late playback', async () => {
     m.generate.mockReturnValueOnce(new Promise(r => { resolve = r; }));
     await startVoice('s'); await endVoice(); resolve(new Uint8Array([1])); await tick();
     expect(m.output.play).not.toHaveBeenCalled(); expect(m.state.realtimeStatus).toBe('disconnected');
+});
+test('waits for a complete clip even when the output supports incremental playback', async () => {
+    let resolve!: (v: Uint8Array) => void;
+    m.generate.mockReturnValueOnce(new Promise<Uint8Array>(r => { resolve = r; }));
+    await startVoice('s'); await tick();
+    expect(m.output.stream).not.toHaveBeenCalled();
+    expect(m.output.play).not.toHaveBeenCalled();
+    expect(m.generate.mock.calls[0]).toHaveLength(2);
+    const wav = new Uint8Array([1, 2, 3]); resolve(wav); await tick();
+    expect(m.output.play).toHaveBeenCalledWith(wav, expect.any(AbortSignal));
 });
 test('closing during audio initialization suppresses welcome and connection', async () => {
     let resolve!: () => void; m.output.prepare.mockReturnValueOnce(new Promise<void>(r => { resolve = r; }));

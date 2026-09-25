@@ -94,7 +94,7 @@ uninstalled agent can leave messages queued while its startup fails.
 Enable spoken updates in a session. The first activation
 downloads about 132 MB of models into the browser; subsequent use is cached.
 The gateway enables cross-origin isolation for up to four WASM CPU threads.
-Web playback streams audio while Pocket generates the rest of the reply.
+Playback waits for each complete clip to avoid mid-word gaps when inference is slower than real time.
 This does not provide microphone transcription or spoken commands. Native
 mobile testing still requires an installed development build on a device.
 

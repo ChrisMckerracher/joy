@@ -30,10 +30,11 @@ export async function startVoice(sessionId: string): Promise<boolean> {
     const state = storage.getState();
     state.setVoiceArmedSessionId(sessionId);
     state.setRealtimeStatus('connecting');
-    const ownQueue = new SpeechQueue((text, signal, onChunk) => onChunk ? speech.generate(text, signal, onChunk) : speech.generate(text, signal), {
+    // Do not expose incremental playback until it can stay ahead of the audio
+    // clock. On slower devices, decoder-sized chunks split words with silence.
+    const ownQueue = new SpeechQueue((text, signal) => speech.generate(text, signal), {
         prepare: () => output.prepare(),
         play: (wav, signal) => output.play(wav, signal),
-        stream: output.stream?.bind(output),
         dispose: () => { output.dispose(); speech.dispose(); },
     }, speaking => {
         if (queue === ownQueue) storage.getState().setRealtimeMode(speaking ? 'agent-speaking' : 'idle', true);
