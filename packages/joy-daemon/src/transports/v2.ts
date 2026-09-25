@@ -24,6 +24,7 @@ import { writeFileAtomicAsync } from "../domain/atomicWrite";
 import { readAgentConfig, writeAgentConfigRaw, applyAgentConfigAssignments, fetchAgentSchema, agentConfigSpec } from "../domain/agentConfig";
 import { fetchClaudeLimits, readCodexLimits, claudeLimitRows } from "../domain/limits";
 import { readGitStatus } from "../domain/gitStatus";
+import { synthesizeSpeech, SpeechError } from "../domain/pocketTts";
 import { TextAccumulator } from "../domain/textStream";
 
 import { HARNESSES, HARNESS_CAPABILITIES, type Harness } from "../domain/harnessCapabilities";
@@ -206,6 +207,25 @@ function withSession(fn: (ctx: Ctx, session: AgentSession, params: Record<string
     return fn(ctx, session, params, body);
   };
 }
+
+// Audio is binary inside the existing sealed tunnel, never a public TTS proxy.
+route("POST", "/v2/voice/speech", async (ctx, _params, body) => {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  ctx.res.on("close", abort);
+  try {
+    const audio = await synthesizeSpeech(body, controller.signal);
+    if (!ctx.res.destroyed) {
+      ctx.res.writeHead(200, { ...ctx.corsHeaders, "Content-Type": "audio/wav", "Content-Length": audio.length, "Cache-Control": "no-store" });
+      ctx.res.end(audio);
+    }
+    return null;
+  } catch (error) {
+    if (ctx.res.destroyed) return null;
+    if (error instanceof SpeechError) return ok({ error: error.message }, error.status);
+    throw error;
+  } finally { ctx.res.off("close", abort); }
+});
 
 // ── machine: status / usage / restart ───────────────────────────────────────
 route("GET", "/v2/status", async (ctx) => ok(await mcall("status", ctx.registry, {})));

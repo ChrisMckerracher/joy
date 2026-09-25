@@ -249,6 +249,7 @@ describe('settings', () => {
                 joy__doubleTapEnabled: false,
                 joy__newSessionDefault: false,
                 pinnedSessions: [],
+                pocketTtsVoice: 'alba',
                 voiceAgents: [],
                 voiceActiveAgentId: null,
                 voiceWakeOnEvents: true,

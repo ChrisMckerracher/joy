@@ -15,6 +15,21 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
 }
 
 export const en = {
+    pocketVoice: {
+        start: 'Enable spoken session updates',
+        enabled: 'Spoken updates on',
+        description: 'Read completed replies, questions and approval alerts from the selected session. Pocket TTS generates speech only; answer and approve in the app.',
+        setup: 'Run on your session machine',
+        setupInstructions: 'With Pocket TTS already installed, run pocket-tts serve --host 127.0.0.1 --port 8000. Set JOY_POCKET_TTS_URL=http://127.0.0.1:8000 in that machine’s daemon environment and restart the daemon. Tap the speaker in a session to test and enable spoken updates.',
+        privacy: 'Text and audio travel through Joy’s encrypted machine connection. No microphone or ElevenLabs account is used. Speech stops when you change sessions or leave the app.',
+        noMachine: 'This session’s machine connection is not ready. Wait for it to connect and try again.',
+        unavailable: 'Pocket TTS is unavailable. Update the daemon and configure Pocket TTS on the session machine.',
+        failed: 'Speech unavailable',
+        welcome: 'Spoken updates are on. Reply and approve requests in the app.',
+        approval: ({ tool }: { tool: string }) => `Permission requested for ${tool}. Review and approve or deny in the app.`,
+        answerInApp: 'Choose your answer in the app.',
+        ready: 'The session has finished working.',
+    },
     tabs: {
         // Tab navigation labels
         sessions: 'Terminals',
@@ -123,7 +138,7 @@ export const en = {
         appearance: 'Appearance',
         appearanceSubtitle: 'Customize how the app looks',
         voice: 'Voice',
-        voiceSubtitle: 'Talk to your sessions through your ElevenLabs agent',
+        voiceSubtitle: 'Read session updates aloud with Pocket TTS',
         models: 'Models',
         modelsSubtitle: 'Which models each agent\'s pickers offer',
         mods: 'Mods',

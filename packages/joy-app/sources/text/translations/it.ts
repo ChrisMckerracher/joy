@@ -1,3 +1,4 @@
+import { en } from '../_default';
 import type { TranslationStructure } from '../_default';
 
 /**
@@ -15,6 +16,8 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * Must match the exact structure of the English translations
  */
 export const it: TranslationStructure = {
+    // Pocket TTS copy falls back to English until localized.
+    pocketVoice: en.pocketVoice,
     tabs: {
         // Tab navigation labels
         sessions: 'Terminali',
@@ -123,7 +126,7 @@ export const it: TranslationStructure = {
         appearance: 'Aspetto',
         appearanceSubtitle: 'Personalizza l\'aspetto dell\'app',
         voice: 'Voce',
-        voiceSubtitle: 'Parla con le sessioni tramite il tuo agente ElevenLabs',
+        voiceSubtitle: 'Ascolta gli aggiornamenti della sessione con Pocket TTS',
         models: 'Modelli',
         modelsSubtitle: 'Quali modelli offrono i selettori di ogni agente',
         mods: 'Mods',

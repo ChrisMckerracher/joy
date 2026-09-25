@@ -47,9 +47,9 @@ export const SettingsSchema = z.object({
     joy__doubleTapEnabled: z.boolean().describe('Mod 06: require double tap to commit AskUserQuestion option/submit selections'),
     joy__tmuxServerUrl: z.string().nullable().describe('URL of the joy-tmux server for session management'),
     joy__newSessionDefault: z.boolean().describe('Joy: New session buttons open the joy-tmux create page instead of /new'),
-    // Voice (ElevenLabs Conversational AI, bring-your-own agent). Synced
-    // end-to-end encrypted like every other setting; the API key never goes
-    // anywhere but api.elevenlabs.io from the device.
+    // Legacy conversational-agent settings below are retained for sync round trips.
+    // Pocket TTS never reads their IDs, credentials or microphone preferences.
+    pocketTtsVoice: z.enum(['alba', 'marius', 'javert', 'jean', 'fantine', 'cosette', 'eponine', 'azelma']).describe('Built-in Pocket TTS voice'),
     // Session list (behind localSettings.sessionListV2). Synced, because a pin
     // and a custom group are statements about the WORK, true on every device —
     // unlike the collapse state, which is device-local by design.
@@ -132,6 +132,7 @@ export const settingsDefaults: Settings = {
     joy__tmuxServerUrl: null,
     joy__newSessionDefault: false,
     pinnedSessions: [],
+    pocketTtsVoice: 'alba',
     voiceAgents: [],
     voiceActiveAgentId: null,
     harnessModels: {},

@@ -179,7 +179,16 @@ export function retryAfterMs(header: string | null | undefined): number {
     return Math.min(RETRY_AFTER_MAX_MS, Math.round(n * 1000));
 }
 
+// React Native's AbortSignal polyfill does not implement throwIfAborted.
+function checkAborted(signal?: AbortSignal): void {
+    if (!signal?.aborted) return;
+    const error = new Error('Request cancelled');
+    error.name = 'AbortError';
+    throw error;
+}
+
 export interface TunnelFetchOpts {
+    signal?: AbortSignal;
     relayUrl: string;
     accountToken: string;
     machineKey: Uint8Array;
@@ -204,6 +213,7 @@ export async function tunnelFetch(opts: TunnelFetchOpts): Promise<TunnelResponse
     const idempotent = opts.method === 'GET' || opts.method === 'HEAD';
     let cutRetried = false;
     for (let attempt = 1; ; attempt++) {
+        checkAborted(opts.signal);
         // Sealed per attempt: a fresh stream id and `t`, so a retry is never a
         // byte-identical replay to the daemon's guard and its clock is current.
         const wire = await sealRequest(key, { m: opts.method, p: opts.path, h: opts.headers ?? {}, t: Date.now() }, opts.body ?? new Uint8Array(0));
@@ -212,6 +222,7 @@ export async function tunnelFetch(opts: TunnelFetchOpts): Promise<TunnelResponse
         // offline, 413 over the declared size) is seen before a large upload
         // finishes.
         const res = await fetch(url, {
+            signal: opts.signal,
             method: 'POST',
             headers: { Authorization: `Bearer ${opts.accountToken}`, 'Content-Type': 'application/octet-stream' },
             body: wire as unknown as BodyInit,
@@ -230,6 +241,7 @@ export async function tunnelFetch(opts: TunnelFetchOpts): Promise<TunnelResponse
         try {
             buf = new Uint8Array(await res.arrayBuffer());
         } catch {
+            checkAborted(opts.signal);
             // Headers said 200 and the body then died under us: the relay
             // destroyed the stream (client_slow / daemon gone mid-response).
             if (idempotent && !cutRetried) { cutRetried = true; continue; }

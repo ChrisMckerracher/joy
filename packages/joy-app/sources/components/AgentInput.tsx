@@ -51,7 +51,7 @@ interface AgentInputProps {
     onSend: () => void;
     sendIcon?: React.ReactNode;
     /** Voice: shown in the send slot while the box is empty (hidden while a
-     *  voice conversation is live or standing by — the status bar owns it). */
+     *  spoken session updates are enabled — the status bar owns it). */
     onMicPress?: () => void;
     isMicActive?: boolean;
     permissionMode?: PermissionMode | null;
@@ -1416,7 +1416,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
                                         onPress={abortMode ? handleAbortPress : handleSendPress}
                                         disabled={abortMode ? isAborting : !canPressSendButton}
-                                        accessibilityLabel={abortMode ? t('common.stop') : undefined}
+                                        accessibilityLabel={abortMode ? t('common.stop') : showMic && !hasText && !hasImages ? t('pocketVoice.start') : undefined}
                                         testID={abortMode ? 'composer-abort-button' : undefined}
                                     >
                                         {abortMode ? (
@@ -1458,11 +1458,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                 ]}
                                             />
                                         ) : showMic ? (
-                                            <Image
-                                                source={require('@/assets/images/icon-voice-white.png')}
-                                                style={{ width: 24, height: 24 }}
-                                                tintColor={theme.colors.button.primary.tint}
-                                            />
+                                            <Ionicons name="volume-high-outline" size={24} color={theme.colors.button.primary.tint} />
                                         ) : (
                                             <Octicons
                                                 name="arrow-up"

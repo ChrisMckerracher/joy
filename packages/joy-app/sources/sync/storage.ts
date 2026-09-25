@@ -249,7 +249,7 @@ interface StorageState {
     isDataReady: boolean;
     nativeUpdateStatus: { available: boolean; updateUrl?: string } | null;
     // Voice (see realtime/RealtimeSession.ts): connection status of the
-    // ElevenLabs conversation, who is talking, a remount counter for the SDK
+    // Pocket TTS playback, who is talking, a remount counter for the SDK
     // provider, and which session voice is ARMED for (null = off).
     realtimeStatus: 'disconnected' | 'connecting' | 'connected' | 'error';
     realtimeMode: 'idle' | 'agent-speaking' | 'user-speaking';

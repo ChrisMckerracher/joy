@@ -1,96 +1,38 @@
-# Voice
+# Voice with Pocket TTS
 
-Voice lets you talk to your sessions: ask what they're doing, send them instructions, and answer their permission requests, hands-free. joy doesn't run a voice service of its own. You bring your own conversational agent from ElevenLabs, and the app connects your microphone to it directly. This page covers setting the agent up, the two conversation modes, and what the agent can see.
+Tap the **speaker** in an empty session composer to enable spoken updates for that session. Joy reads completed assistant replies, choice questions and pending approval alerts. Stop with the voice bar or its ×. Navigating to another session or leaving the app stops speech, cancels pending work and discards queued updates. A failure shows its cause; tap the bar to retry.
 
-## What you need
+Pocket TTS is a speech synthesizer, not a conversational agent. This replaces the ElevenLabs conversation: Joy no longer records your microphone, interprets spoken commands or answers approvals by voice. **Reply and approve in the app.** There is no automatic speech-recognition or LLM fallback. No ElevenLabs account, agent, key or subscription is required.
 
-- An **ElevenLabs** account and a Conversational AI agent created on the ElevenLabs dashboard.
-- The agent's **agent id** (it starts with `agent_`).
-- If the agent has authentication turned on, an ElevenLabs **API key**. A public agent needs only its id.
-- Microphone access for the app, on your phone or in your browser.
+## Set up the session machine
 
-Voice works in the phone app and on the web.
+Pocket TTS must be installed separately on each machine whose sessions you want to hear. Joy does not install Python packages, download models, or launch the service. Consult [Kyutai’s installation instructions](https://github.com/kyutai-labs/pocket-tts) before installing it. First use may download model/voice weights and must finish before testing Joy.
 
-## Set up the agent on ElevenLabs
+With Pocket TTS installed, run:
 
-On the ElevenLabs dashboard, give your agent two **client tools**. These are how it acts on your sessions:
+```sh
+pocket-tts serve --host 127.0.0.1 --port 8000
+```
 
-| Tool | What it does |
-|---|---|
-| `sendMessageToSession(sessionId, message)` | Sends text into a session, as if you had typed it. |
-| `processPermissionRequest(requestId, decision)` | Allows or denies a tool call a session is waiting on. |
+Set this in the **Joy daemon’s environment**, then restart that daemon:
 
-You can also add ElevenLabs' built-in `skip_turn` tool.
+```sh
+JOY_POCKET_TTS_URL=http://127.0.0.1:8000
+```
 
-Then give the agent its instructions. Settings → Voice → **Suggested system prompt** copies joy's operating notes to your clipboard; paste them into the agent's prompt on the dashboard.
+For a managed daemon, set the variable in its service configuration; exporting it in an unrelated shell does not update an already running service. Update both the app and daemon to this version. Older daemons do not have the speech endpoint.
 
-If you plan to use **Standby** mode (below), also open the agent's **Security** tab on the dashboard and enable overrides for the **system prompt** and the **first message**. **Stays on** mode needs neither.
+Keep Pocket TTS bound to loopback. The browser/phone sends requests through Joy’s existing authenticated, end-to-end encrypted machine tunnel. There is no need to open port 8000, configure CORS, or point the browser at localhost. The service lives on the session’s machine, which may differ from the device running the app.
 
-## Add the agent in joy
+**Settings → Voice** selects one of the eight built-in voices. Changing the voice ends active speech; tap the speaker again to use the new voice. A short spoken confirmation tests the complete path. New Pocket TTS UI text currently falls back to English in other app languages. Use the default English model with these voices; language selection and voice cloning are not exposed by this integration.
 
-1. Open Settings → **Voice**.
-2. Tap **Add agent**.
-3. Enter a **Name** (for example "Joy"), the **Agent id**, and, for a private agent, the **API key**. Leave the key empty for a public agent.
+## Behavior and limits
 
-You can add several agents. The one marked **In use** is the one the microphone connects to; tap another and choose **Use this agent** to switch. Each agent can be renamed, have its key set or replaced, or be removed.
+- Only the explicitly selected session speaks. Incremental text and reasoning are not read aloud. Completed replies are shortened to about 400 characters; this is an excerpt, not an AI summary. Code blocks, embedded file/image payloads and internal markup are omitted.
+- Pending approvals announce the tool name, never its arguments. An approval answered before its audio starts is discarded. Choice questions are read with their options; answer in the app.
+- Speech is serialized, bounded to eight queued clips and expires after 30 seconds. Repeated pending completion updates replace older ones. Stop aborts transport and prevents late audio from playing.
+- The daemon permits one generation at a time, caps text at 500 characters and audio at 4 MiB, and times out generation after 45 seconds. It accepts only built-in voice names and a daemon-configured literal loopback HTTP destination, with redirects disabled.
+- The official `/tts` API returns streamed WAV. Joy buffers each short clip and repairs the placeholder WAV lengths before native/web playback. This first integration does **not** play audio as it streams; latency includes generating the clip.
+- Speech text and generated audio pass through the encrypted tunnel. Text is processed by the local Pocket TTS process. Native playback uses a temporary cache file, deleted after playback or cancellation. Old encrypted ElevenLabs settings remain inert for compatibility with other clients; this version never reads or sends those credentials.
 
-## Start and end a conversation
-
-When the composer is empty and no turn is running, its send button shows a microphone. Tap it to start voice.
-
-A voice bar shows where the conversation stands:
-
-| Status | Meaning |
-|---|---|
-| **Connecting…** | The app is opening the conversation. |
-| **Voice live** | You're talking to the agent. In **Stays on** mode, tap the bar to end it; in **Standby**, tap to hang up and stand by. |
-| **Joy idle** | Standby: the conversation has hung up and is waiting to wake. Tap to talk, or just start talking if **Wake on sound** is on. |
-| **Voice error** | Voice could not start or was refused. Tap to retry. |
-
-The **×** on the bar ends voice altogether. The agent can also end the call itself, which turns voice off.
-
-If the connection drops, the app reconnects on its own, a few times, with a short delay between tries.
-
-## Conversation modes
-
-Settings → Voice → **Conversation** has two modes.
-
-### Stays on
-
-The default. Tapping the microphone opens one conversation, and it stays open until you end it. There is no hang-up after silence and nothing wakes it. The app sends nothing the agent has to allow, so an agent straight off the dashboard works as is. Joy's operating notes and a briefing on your sessions are sent as context each time the conversation connects.
-
-### Standby
-
-The conversation hangs up after a stretch of silence and stays **armed**: nothing is connected, so nothing is billed, but it can wake again. While standing by:
-
-- **Wake on session events** reconnects and speaks when a turn ends, an approval is waiting, or a session asks you a question.
-- **Wake on sound** listens on the device while the app is open, and reconnects when you start talking. It measures sound level only, not words, so a TV or a nearby conversation can wake it too.
-- **Hang up after silence** sets how many seconds of silence end the conversation. The default is 45 seconds; 0 means never.
-
-What was said is kept across hang-ups and replayed to the agent when it reconnects.
-
-Standby mode needs the system-prompt and first-message overrides enabled on the agent's **Security** tab. Without them, ElevenLabs closes every call as soon as it opens. The app detects this: if a call ends within a few seconds of connecting, before anyone has spoken, it stops and shows **Voice call refused** with the likely reason, instead of retrying. Enable the overrides on the dashboard, or switch to **Stays on**.
-
-## What the agent can see and do
-
-While a conversation is live, the agent is kept up to date on your sessions:
-
-- When it connects, it gets joy's operating notes, a list of your sessions, the session you have open, and, after a reconnect, what was said so far.
-- As you move between sessions and as new messages arrive, it is told quietly, without speaking.
-- When a turn ends, a permission request arrives, or a session asks you a question, it is prompted to tell you.
-
-It acts only through the two client tools: sending a message into a session, and answering a permission request. It can't read your files or run commands on its own.
-
-## Privacy
-
-- **Your voice and the session context go to ElevenLabs.** The app connects your microphone straight to ElevenLabs from your device; no joy server is involved. Whatever the agent is told about your sessions, including recent messages, is sent to ElevenLabs to make that possible. Use voice only with sessions you are comfortable sharing with ElevenLabs.
-- **Your API key stays with you.** A private agent's API key is stored in your account settings, which are encrypted end to end. The app uses it only on your device, to open each conversation; it is never sent to the relay in readable form.
-- **Wake on sound stays on the device.** It measures sound level locally and sends nothing until it decides to reconnect.
-
-## Related
-
-- [The app](app.md)
-- [Messages and the queue](messages.md)
-- [Notifications](notifications.md)
-- [Security](../reference/security.md)
-- [FAQ](../reference/faq.md)
+If the bar shows **Speech unavailable**, check that Pocket TTS is running on the session machine, its model has finished loading, the daemon inherited `JOY_POCKET_TTS_URL`, and the daemon is current. A busy CPU or another device generating speech can also require a retry. On the web, tap the speaker directly to allow browser audio playback.

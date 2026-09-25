@@ -70,6 +70,32 @@ const dec = (b: Uint8Array) => new TextDecoder().decode(b);
 describe('tunnel.ts retry and cut-stream handling', () => {
     beforeAll(async () => { await _sodium.ready; });
 
+    it('does not dispatch an already cancelled speech request', async () => {
+        const { tunnelFetch } = await import('./tunnel');
+        const controller = new AbortController(); controller.abort();
+        const original = globalThis.fetch; const fetcher = vi.fn(); globalThis.fetch = fetcher;
+        try {
+            await expect(tunnelFetch({ ...ctx, method: 'POST', path: '/v2/voice/speech', signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
+            expect(fetcher).not.toHaveBeenCalled();
+        } finally { globalThis.fetch = original; }
+    });
+
+    it('cancels a response body without treating it as a cut stream or retrying', async () => {
+        const { tunnelFetch } = await import('./tunnel');
+        const controller = new AbortController(); const original = globalThis.fetch;
+        const fetcher = vi.fn(async (_url: unknown, init: RequestInit | undefined) => {
+            expect(init?.signal).toBe(controller.signal);
+            return { ok: true, status: 200, headers: { get: () => 'application/octet-stream' }, arrayBuffer: async () => {
+                controller.abort(); throw new DOMException('Cancelled', 'AbortError');
+            } } as unknown as Response;
+        });
+        globalThis.fetch = fetcher;
+        try {
+            await expect(tunnelFetch({ ...ctx, method: 'GET', path: '/v2/status', signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
+            expect(fetcher).toHaveBeenCalledOnce();
+        } finally { globalThis.fetch = original; }
+    });
+
     it('retryAfterMs: seconds → ms, missing/garbage → 1s, capped at 5s', async () => {
         const { retryAfterMs } = await import('./tunnel');
         expect(retryAfterMs('1')).toBe(1000); expect(retryAfterMs('0')).toBe(0);
