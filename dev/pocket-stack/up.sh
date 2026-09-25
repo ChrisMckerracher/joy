@@ -22,7 +22,20 @@ else
   podman start joy-pocket-relay >/dev/null
 fi
 if ! podman container exists joy-pocket-web; then
+  tls_args=()
+  if [[ -n "${JOY_TEST_TLS_DIR:-}" ]]; then
+    tls_dir=$(realpath "$JOY_TEST_TLS_DIR")
+    test -f "$tls_dir/server.crt"
+    test -f "$tls_dir/server.key"
+    # Only the leaf key enters the container; the CA signing key stays outside.
+    podman secret create --replace joy-pocket-tls-key "$tls_dir/server.key" >/dev/null
+    tls_args=(-p "$bind:${JOY_TEST_HTTPS_PORT:-3443}:8443"
+      --secret joy-pocket-tls-key,uid=1000,gid=1000,mode=0400
+      -v "$tls_dir/server.crt:/run/joy-server.crt:ro"
+      -e TLS_CERT=/run/joy-server.crt -e TLS_KEY=/run/secrets/joy-pocket-tls-key)
+  fi
   podman run -d --name joy-pocket-web "${common[@]}" \
+    "${tls_args[@]}" \
     -p "$bind:$port:8080" -v "$web:/web:ro" \
     -v "$repo/dev/pocket-stack/gateway.mjs:/gateway.mjs:ro" \
     -e "ALLOWED_HOSTS=agent-01,localhost,127.0.0.1,100.121.220.10,agent-01.taile7098d.ts.net" \
@@ -50,3 +63,6 @@ else
   echo 'Daemon image not built yet. Web and relay are running.'
 fi
 printf 'Joy: http://agent-01:%s (Pocket on a remote browser requires HTTPS)\n' "$port"
+if [[ -n "${JOY_TEST_TLS_DIR:-}" ]]; then
+  printf 'Direct HTTPS: https://agent-01:%s (trust the local CA in your browser first)\n' "${JOY_TEST_HTTPS_PORT:-3443}"
+fi

@@ -2,7 +2,7 @@
 
 The web container serves an Expo export and proxies `/joy/v2` to a relay with
 its own database volume. Pocket runs in the browser. The optional daemon has
-its own home volume, pairing and agent login. Only the web port is published;
+its own home volume, pairing and agent login. Only web ports are published;
 the daemon's control port and the relay stay inside the container network.
 
 This developer setup reuses an existing checkout and its installed Linux
@@ -28,16 +28,29 @@ installed standalone Codex executable, set `JOY_TEST_CODEX_BIN=/path/to/codex`
 when first creating the daemon. Credentials are not copied from the host.
 
 HTTP is available at http://agent-01:3210. Remote Pocket speech requires a secure
-browser context. Private Tailscale Serve can supply HTTPS (enable Serve in the
-tailnet first; do not use Funnel):
+browser context. The gateway can serve HTTPS directly, with a local certificate
+for `agent-01`. No Tailscale Serve or additional packages are needed:
 
 ```sh
-tailscale serve --bg --https=8443 http://127.0.0.1:3210
+bash dev/pocket-stack/make-cert.sh /tmp/joy-pocket-direct-tls
+# Recreate just the stateless web container to add the TLS port and secret mount.
+podman stop joy-pocket-web
+podman rm joy-pocket-web
+JOY_TEST_TLS_DIR=/tmp/joy-pocket-direct-tls bash dev/pocket-stack/up.sh /tmp/joy-pocket-web
 ```
 
-On agent-01 this gives https://agent-01.taile7098d.ts.net:8443. Alternatively,
-from the laptop run `ssh -N -L 3210:127.0.0.1:3210 agent-01` and visit
-http://localhost:3210, which browsers treat as a secure context.
+Copy `/tmp/joy-pocket-direct-tls/ca.crt` to the laptop (for example with `scp`)
+and import it as a trusted certificate authority in the browser's certificate
+settings. Then open https://agent-01:3443. Trusting the CA avoids certificate
+warnings and enables Pocket's model verification API; clicking through a warning
+is not the supported setup. The server certificate lasts 90 days. Regenerate in
+a new directory and recreate the web container when it expires. Keep the CA
+signing key private; only the server's leaf key enters the container, as a
+Podman secret. `JOY_TEST_HTTPS_PORT` overrides the default 3443.
+
+Alternatively, from the laptop run `ssh -N -L 3210:127.0.0.1:3210 agent-01` and
+visit http://localhost:3210, which browsers treat as a secure context. Browser
+accounts and model caches are stored per origin, so choose one URL for testing.
 
 Create a test account in the web app. Pair the daemon using that account's
 backup code in a terminal on the VM, then restart it to load the pairing:
@@ -62,7 +75,6 @@ podman ps --filter name=joy-pocket
 podman logs joy-pocket-relay
 podman logs joy-pocket-daemon
 podman stop joy-pocket-web joy-pocket-daemon joy-pocket-relay
-tailscale serve --https=8443 off
 ```
 
 The launcher starts existing containers without changing their mounts or port.

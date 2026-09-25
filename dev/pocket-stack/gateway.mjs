@@ -1,5 +1,6 @@
 // Dependency-free dev gateway: same-origin relay API and exported Expo web app.
 import http from 'node:http';
+import https from 'node:https';
 import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -8,7 +9,7 @@ const root = path.resolve(process.env.WEB_ROOT || '/web');
 const relay = new URL(process.env.RELAY_URL || 'http://joy-pocket-relay:3105');
 const hosts = new Set((process.env.ALLOWED_HOSTS || 'agent-01,localhost,127.0.0.1').split(','));
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.ttf': 'font/ttf', '.woff2': 'font/woff2' };
-const server = http.createServer(async (req, res) => {
+const handleRequest = async (req, res) => {
   try {
     let url;
     try { url = new URL(req.url, `http://${req.headers.host}`); } catch { res.writeHead(400).end(); return; }
@@ -51,6 +52,14 @@ const server = http.createServer(async (req, res) => {
       else createReadStream(file).on('error', () => res.destroy()).pipe(res);
     }
   } catch { if (!res.headersSent) res.writeHead(500); res.end(); }
-});
+};
+// Optional direct HTTPS, with the private key supplied as a container secret.
+if (process.env.TLS_CERT || process.env.TLS_KEY) {
+  const [cert, key] = await Promise.all([readFile(process.env.TLS_CERT), readFile(process.env.TLS_KEY)]);
+  const secureServer = https.createServer({ cert, key, minVersion: 'TLSv1.2' }, handleRequest);
+  secureServer.requestTimeout = 0;
+  secureServer.listen(Number(process.env.HTTPS_PORT || 8443), '0.0.0.0');
+}
+const server = http.createServer(handleRequest);
 server.requestTimeout = 0; // Relay streams and long polls can remain open.
 server.listen(Number(process.env.PORT || 8080), '0.0.0.0');
