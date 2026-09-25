@@ -83,7 +83,13 @@ podman exec joy-pocket-daemon mkdir -p /home/node/workspace
 ```
 
 Create a Codex session in the app on this machine with directory
-`/home/node/workspace`. Enable spoken updates in a session. The first activation
+`/home/node/workspace`. Explicitly choose **Codex** in the new-session agent
+selector: Joy defaults to Claude, but this image does not install Claude. The
+Codex executable must be mounted as described above and `codex login status`
+inside the container must report a login before testing replies. Choosing an
+uninstalled agent can leave messages queued while its startup fails.
+
+Enable spoken updates in a session. The first activation
 downloads about 132 MB of models into the browser; subsequent use is cached.
 This does not provide microphone transcription or spoken commands. Native
 mobile testing still requires an installed development build on a device.
