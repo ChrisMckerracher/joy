@@ -91,26 +91,36 @@ export function useSessionListV2(): SessionListViewItem[] | null {
             emitRows(automationsFailed);
         }
 
-        // Pinned, above the active block: a pin is the one row whose position
-        // you chose yourself, and the active block grows and shrinks on its own.
-        if (pins.length > 0) {
-            const sorted = buildListLayout({ sessions: pins, pinned, collapsed, pinnedSort })
-                .find((x) => x.kind === 'pinned');
+        // The list is read twice. First flat — what you pinned, then everything
+        // else that is live — in one visual language and one order. Then the
+        // same sessions again by machine, below, for when the machine is what
+        // you are thinking about. Both halves are complete; neither hides a
+        // row from the other (sessionListModel.ts, rule 1).
+        const flat = buildListLayout({ sessions: [...pins, ...active], pinned, collapsed, pinnedSort });
+        for (const kind of ['pinned', 'unpinned'] as const) {
+            const section = flat.find((x) => x.kind === kind);
+            if (!section) continue;
             items.push({
                 type: 'header',
-                title: t('sidebar.pinned'),
-                sortMode: pinnedSort,
-                count: pins.length,
-                collapsed: false,
-                worstState: null,
+                sectionKey: section.key,
+                title: kind === 'pinned' ? t('sidebar.pinned') : t('sidebar.unpinned'),
+                // The sort control belongs to the pair, so it is offered on the
+                // header that is always first.
+                sortMode: kind === 'pinned' ? pinnedSort : undefined,
+                count: section.sessions.length,
+                collapsed: section.collapsed,
+                worstState: section.collapsed ? section.worstState : null,
             });
-            emitRows((sorted?.sessions ?? pins) as typeof rows, true);
+            if (!section.collapsed) emitRows(section.sessions as typeof rows, true);
         }
 
-        if (active.length > 0) {
+        // By machine: pinned rows included, because "what is on that machine"
+        // is not a question a pin answers. These start collapsed — they repeat
+        // what is directly above them — and each remembers being opened.
+        if (pins.length > 0 || active.length > 0) {
             items.push({
                 type: 'active-sessions',
-                sessions: active
+                sessions: [...pins, ...active]
                     .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
                     .map((r) => sessionRowDataFor(r.session, unread)),
             });

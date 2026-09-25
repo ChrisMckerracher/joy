@@ -1,3 +1,9 @@
+# Sep 25 — The session list reads twice, and identicons can mean something else
+
+- **Pinned, then everything else, then the machines.** The top of the list is now two flat sections in one visual language: what you pinned, and every other live session in the same order. Below them the same sessions appear again grouped by machine, for when the machine is what you are thinking about — so a session is always in both places, and pinning no longer moves a row out of the machine you last saw it under.
+- **Both flat sections fold.** Press the title of Pinned or Everything else to collapse it; the order control beside it ("by state" / "by project") is now its own button rather than sharing the press. The machine groups below start collapsed, since they repeat what is directly above them, and each remembers being opened.
+- **An identicon can mean a machine, a session or an agent.** Appearance → *What an identicon means* picks what the generated face is drawn from. It still defaults to the project — a folder on a machine, which is what it has always been — but you can make every session its own face, or give one face to each machine or each agent, so a column of rows groups at a glance without reading the text.
+
 # Sep 24 (2) — Dragging across a button no longer selects its text
 
 - **On desktop and the web, a mouse drag over a button presses it instead of painting the label blue.** Option chips, Approve and Deny, the queue's buttons and the send arrow all behaved like a paragraph of text when the pointer moved while the mouse was down. Message text stays selectable, and so does anything you can type into.

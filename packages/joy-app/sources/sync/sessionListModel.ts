@@ -10,11 +10,23 @@
  *
  * Two rules are worth stating because they are where the two features meet:
  *
- *   1. A session appears ONCE. A pinned session leaves its machine section;
- *      one session in two places is worse than either placement.
+ *   1. The list is read TWICE. The top of it answers "what is pinned, and what
+ *      else is live" in two flat sections; below that the same sessions are
+ *      grouped by machine, for when the machine is what you are thinking
+ *      about. A session therefore appears in exactly two places, and the pair
+ *      is deliberate — an earlier version placed each session once and made
+ *      pinning move a row out of its machine, which meant you could not find
+ *      it where you last saw it.
  *   2. A collapsed section still reports how many sessions are inside and
  *      whether any of them needs a human, so collapsing compresses the list
  *      without concealing the thing you would want to act on.
+ *
+ * Because the machine sections repeat what is already above them, they start
+ * COLLAPSED and an expansion is remembered. That is a different default from
+ * the flat sections, which start open, so the two live in different lists:
+ * `collapsed` holds what you shut that opens by default, `expanded` holds what
+ * you opened that shuts by default. One list with two meanings could not say
+ * which state was a choice and which was a default.
  */
 
 import { STATUS_PALETTE } from '@/utils/statusPalette';
@@ -144,11 +156,12 @@ export function partitionForList<T extends ListSession>(input: {
 }
 
 export interface ListSection<T extends ListSession = ListSession> {
-    /** Stable across renders — the collapse key. 'pinned', 'automations',
-     *  'automation-failures', else `m:<id>`. */
+    /** Stable across renders — the collapse key. 'pinned', 'unpinned',
+     *  'automations', 'automation-failures', else `m:<id>`. */
     key: string;
-    kind: 'pinned' | 'machine' | 'automations' | 'automation-failures';
-    /** Machine id for the caller to resolve to a display name; null for pins. */
+    kind: 'pinned' | 'unpinned' | 'machine' | 'automations' | 'automation-failures';
+    /** Machine id for the caller to resolve to a display name; null for the
+     *  two flat sections. */
     machineId: string | null;
     sessions: T[];
     collapsed: boolean;
@@ -186,8 +199,10 @@ export interface ListLayoutInput<T extends ListSession = ListSession> {
     /** Sessions to place — the caller has already excluded the active block. */
     sessions: T[];
     pinned: string[];
-    /** Section keys the user has collapsed. */
+    /** Sections the user shut that would otherwise be open: the flat ones. */
     collapsed: string[];
+    /** Sections the user opened that would otherwise be shut: the machines. */
+    expanded?: string[];
     /** Machine ids in the order the caller wants their sections to appear. */
     machineOrder?: string[];
     /** Pinned order. Default 'state'. */
@@ -231,6 +246,7 @@ function pinnedComparator<T extends ListSession>(sort: PinnedSort) {
  */
 export function buildListLayout<T extends ListSession>(input: ListLayoutInput<T>): ListSection<T>[] {
     const isCollapsed = (key: string) => input.collapsed.indexOf(key) !== -1;
+    const isExpanded = (key: string) => (input.expanded ?? []).indexOf(key) !== -1;
     const sections: ListSection<T>[] = [];
 
     const worstOf = (items: T[]): string | null => {
@@ -243,24 +259,39 @@ export function buildListLayout<T extends ListSession>(input: ListLayoutInput<T>
     // Newest first inside every section, matching the list's existing sort.
     const byRecency = (a: T, b: T) => (b.activeAt ?? b.createdAt ?? 0) - (a.activeAt ?? a.createdAt ?? 0);
 
-    // Pinned: never collapsed. A pin is a statement that you want it in front
-    // of you, so its header is a label rather than a control.
-    const pins = input.sessions.filter((s) => input.pinned.indexOf(s.id) !== -1);
+    // The two flat sections, read the same way and ordered the same way: what
+    // you pinned, then everything else that is live. Both open by default and
+    // both shut by pressing the title.
+    const pinnedIds = new Set(input.pinned);
+    const pins = input.sessions.filter((s) => pinnedIds.has(s.id));
+    const loose = input.sessions.filter((s) => !pinnedIds.has(s.id));
+    const flat = pinnedComparator(input.pinnedSort ?? 'state');
     if (pins.length > 0) {
         sections.push({
             key: 'pinned',
             kind: 'pinned',
             machineId: null,
-        sessions: [...pins].sort(pinnedComparator(input.pinnedSort ?? 'state')),
-            collapsed: false,
+            sessions: [...pins].sort(flat),
+            collapsed: isCollapsed('pinned'),
             worstState: worstOf(pins),
         });
     }
+    if (loose.length > 0) {
+        sections.push({
+            key: 'unpinned',
+            kind: 'unpinned',
+            machineId: null,
+            sessions: [...loose].sort(flat),
+            collapsed: isCollapsed('unpinned'),
+            worstState: worstOf(loose),
+        });
+    }
 
-    // Everything else, by machine. A pinned session is already placed (rule 1).
+    // The same sessions again, by machine — pinned ones included, because this
+    // half of the list answers "what is on that machine" and a pin is not an
+    // answer to it (rule 1).
     const buckets = new Map<string, T[]>();
     for (const s of input.sessions) {
-        if (input.pinned.indexOf(s.id) !== -1) continue;
         const id = s.machineId ?? '';
         const bucket = buckets.get(id) ?? [];
         bucket.push(s);
@@ -286,7 +317,7 @@ export function buildListLayout<T extends ListSession>(input: ListLayoutInput<T>
             kind: 'machine',
             machineId: id || null,
             sessions: [...items].sort(byRecency),
-            collapsed: isCollapsed(key),
+            collapsed: !isExpanded(key),
             worstState: worstOf(items),
         });
     }

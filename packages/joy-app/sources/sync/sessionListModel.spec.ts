@@ -17,17 +17,25 @@ const layout = (over: Partial<Parameters<typeof buildListLayout>[0]>) =>
 const keys = (l: ReturnType<typeof layout>) => l.map((x) => x.key);
 const idsIn = (l: ReturnType<typeof layout>, key: string) =>
     l.find((x) => x.key === key)?.sessions.map((x) => x.id) ?? [];
+/** Machine sections repeat the flat list, so they start shut; these specs are
+ *  about placement, and open them to read what is inside. */
+const open = (...machines: string[]) => ({ expanded: machines });
 
 describe('sections', () => {
     it('is empty for an empty list', () => {
         expect(layout({})).toEqual([]);
     });
 
-    it('groups by machine, and has no pinned section until something is pinned', () => {
+    it('reads twice: the flat list first, then the same sessions by machine', () => {
         const l = layout({
             sessions: [s({ id: 'a', machineId: 'fny' }), s({ id: 'b', machineId: 'boite' })],
         });
-        expect(keys(l).sort()).toEqual(['m:boite', 'm:fny']);
+        expect(keys(l)).toEqual(['unpinned', 'm:boite', 'm:fny']);
+    });
+
+    it('has no pinned section until something is pinned, and no unpinned one when all are', () => {
+        expect(keys(layout({ sessions: [s({ id: 'a' })] }))).toEqual(['unpinned', 'm:faraz-vip']);
+        expect(keys(layout({ sessions: [s({ id: 'a' })], pinned: ['a'] }))).toEqual(['pinned', 'm:faraz-vip']);
     });
 
     it('puts the busiest machine first by default', () => {
@@ -37,7 +45,7 @@ describe('sections', () => {
                 s({ id: 'b', machineId: 'two' }), s({ id: 'c', machineId: 'two' }),
             ],
         });
-        expect(keys(l)).toEqual(['m:two', 'm:one']);
+        expect(keys(l)).toEqual(['unpinned', 'm:two', 'm:one']);
     });
 
     it('honours an explicit machine order when the caller gives one', () => {
@@ -48,7 +56,7 @@ describe('sections', () => {
             ],
             machineOrder: ['one', 'two'],
         });
-        expect(keys(l)).toEqual(['m:one', 'm:two']);
+        expect(keys(l)).toEqual(['unpinned', 'm:one', 'm:two']);
     });
 
     it('sorts newest first inside a section', () => {
@@ -64,38 +72,55 @@ describe('sections', () => {
 
     it('keeps a session with no machine in its own section rather than dropping it', () => {
         const l = layout({ sessions: [s({ id: 'a', machineId: null })] });
-        expect(keys(l)).toEqual(['m:']);
-        expect(l[0].machineId).toBeNull();
+        expect(keys(l)).toEqual(['unpinned', 'm:']);
+        expect(l[1].machineId).toBeNull();
     });
 });
 
-describe('rule 1 — a session appears exactly once', () => {
-    it('a pin leaves its machine section', () => {
-        const l = layout({ sessions: [s({ id: 'a' }), s({ id: 'b' })], pinned: ['a'] });
-        expect(keys(l)).toEqual(['pinned', 'm:faraz-vip']);
-        expect(idsIn(l, 'pinned')).toEqual(['a']);
-        expect(idsIn(l, 'm:faraz-vip')).toEqual(['b']);
+describe('rule 1 — the list is read twice', () => {
+    it('a pin moves a session between the two flat sections, never out of its machine', () => {
+        const loose = layout({ sessions: [s({ id: 'a' })], ...open('m:faraz-vip') });
+        expect(idsIn(loose, 'unpinned')).toEqual(['a']);
+        expect(idsIn(loose, 'm:faraz-vip')).toEqual(['a']);
+
+        const pinned = layout({ sessions: [s({ id: 'a' })], pinned: ['a'], ...open('m:faraz-vip') });
+        expect(idsIn(pinned, 'pinned')).toEqual(['a']);
+        expect(idsIn(pinned, 'unpinned')).toEqual([]);
+        expect(idsIn(pinned, 'm:faraz-vip')).toEqual(['a'], );
     });
 
-    it('a machine whose only session is pinned gets no section of its own', () => {
-        const l = layout({ sessions: [s({ id: 'a', machineId: 'fny' })], pinned: ['a'] });
-        expect(keys(l)).toEqual(['pinned']);
+    it('a machine whose only session is pinned keeps its section', () => {
+        const l = layout({ sessions: [s({ id: 'a', machineId: 'fny' })], pinned: ['a'], ...open('m:fny') });
+        expect(keys(l)).toEqual(['pinned', 'm:fny']);
+        expect(idsIn(l, 'm:fny')).toEqual(['a']);
     });
 
-    it('every session lands somewhere, and nowhere twice', () => {
+    it('every session appears exactly once up top and exactly once by machine', () => {
         const sessions = [
-            s({ id: 'a', machineId: 'fny' }),
-            s({ id: 'b', machineId: 'boite' }),
-            s({ id: 'c', machineId: 'fny' }),
+            s({ id: 'a', machineId: 'fny' }), s({ id: 'b', machineId: 'fny' }),
+            s({ id: 'c', machineId: 'boite' }), s({ id: 'd', machineId: null }),
         ];
-        const l = layout({ sessions, pinned: ['c'] });
-        const seen = l.flatMap((x) => x.sessions.map((y) => y.id));
-        expect(seen.slice().sort()).toEqual(['a', 'b', 'c']);
-        expect(new Set(seen).size).toBe(seen.length);
+        const l = layout({ sessions, pinned: ['b', 'd'], expanded: ['m:fny', 'm:boite', 'm:'] });
+        const flat = [...idsIn(l, 'pinned'), ...idsIn(l, 'unpinned')].sort();
+        const byMachine = l.filter((x) => x.kind === 'machine').flatMap((x) => x.sessions.map((y) => y.id)).sort();
+        expect(flat).toEqual(['a', 'b', 'c', 'd']);
+        expect(byMachine).toEqual(['a', 'b', 'c', 'd']);
     });
 
     it('a pinned id that is not in the list is simply not a section', () => {
-        expect(layout({ sessions: [], pinned: ['ghost'] })).toEqual([]);
+        expect(keys(layout({ sessions: [], pinned: ['ghost'] }))).toEqual([]);
+    });
+
+    it('both flat sections are ordered the same way', () => {
+        const sessions = [
+            s({ id: 'p-late', state: 'waiting', project: 'zeta' }),
+            s({ id: 'p-urgent', state: 'blocked', project: 'alpha' }),
+            s({ id: 'u-late', state: 'waiting', project: 'zeta' }),
+            s({ id: 'u-urgent', state: 'blocked', project: 'alpha' }),
+        ];
+        const l = layout({ sessions, pinned: ['p-late', 'p-urgent'], pinnedSort: 'state' });
+        expect(idsIn(l, 'pinned')).toEqual(['p-urgent', 'p-late']);
+        expect(idsIn(l, 'unpinned')).toEqual(['u-urgent', 'u-late']);
     });
 });
 
@@ -107,25 +132,36 @@ describe('rule 2 — a collapsed section still reports what is inside', () => {
                 s({ id: 'b', state: 'blocked' }),
                 s({ id: 'c', state: 'waiting' }),
             ],
-            collapsed: ['m:faraz-vip'],
         });
-        expect(l[0].collapsed).toBe(true);
-        expect(l[0].worstState).toBe('blocked');
-        expect(l[0].sessions).toHaveLength(3); // the count survives collapse
+        const m = l.find((x) => x.key === 'm:faraz-vip')!;
+        expect(m.collapsed).toBe(true);
+        expect(m.worstState).toBe('blocked');
+        expect(m.sessions).toHaveLength(3); // the count survives collapse
     });
 
-    it('collapsing one machine leaves the others open', () => {
+    it('machines start shut, because they repeat what is already above them', () => {
+        const l = layout({ sessions: [s({ id: 'a', machineId: 'fny' }), s({ id: 'b', machineId: 'boite' })] });
+        expect(l.filter((x) => x.kind === 'machine').every((x) => x.collapsed)).toBe(true);
+    });
+
+    it('expanding one machine leaves the others shut, and is remembered by key', () => {
         const l = layout({
             sessions: [s({ id: 'a', machineId: 'fny' }), s({ id: 'b', machineId: 'boite' })],
-            collapsed: ['m:fny'],
+            expanded: ['m:fny'],
         });
-        expect(l.find((x) => x.key === 'm:fny')!.collapsed).toBe(true);
-        expect(l.find((x) => x.key === 'm:boite')!.collapsed).toBe(false);
+        expect(l.find((x) => x.key === 'm:fny')!.collapsed).toBe(false);
+        expect(l.find((x) => x.key === 'm:boite')!.collapsed).toBe(true);
     });
 
-    it('pinned never collapses, whatever the collapse list says', () => {
-        const l = layout({ sessions: [s({ id: 'a' })], pinned: ['a'], collapsed: ['pinned'] });
-        expect(l[0].collapsed).toBe(false);
+    it('the flat sections start open and each shuts on its own', () => {
+        const sessions = [s({ id: 'a' }), s({ id: 'b' })];
+        const openBoth = layout({ sessions, pinned: ['a'] });
+        expect(openBoth.find((x) => x.key === 'pinned')!.collapsed).toBe(false);
+        expect(openBoth.find((x) => x.key === 'unpinned')!.collapsed).toBe(false);
+
+        const shut = layout({ sessions, pinned: ['a'], collapsed: ['pinned'] });
+        expect(shut.find((x) => x.key === 'pinned')!.collapsed).toBe(true);
+        expect(shut.find((x) => x.key === 'unpinned')!.collapsed).toBe(false);
     });
 });
 
@@ -409,7 +445,7 @@ describe('the pinned order', () => {
         expect(pinnedStateRank('something-new')).toBe(5);
     });
 
-    it('machine sections are still newest-first — only pins are by project', () => {
+    it('machine sections are still newest-first, while the flat list above is not', () => {
         const l = buildListLayout({
             sessions: [
                 s({ id: 'old', project: '~/apple', activeAt: NOW - 5_000 }),
@@ -417,8 +453,10 @@ describe('the pinned order', () => {
             ],
             pinned: [],
             collapsed: [],
+            expanded: ['m:faraz-vip'],
         });
-        expect(l[0].sessions.map((x) => x.id)).toEqual(['new', 'old']);
+        expect(idsIn(l, 'm:faraz-vip')).toEqual(['new', 'old']);
+        expect(idsIn(l, 'unpinned')).toEqual(['old', 'new']); // by project: apple, zebra
     });
 });
 

@@ -24,6 +24,7 @@ import { SessionActionsAnchor, SessionActionsPopover } from './SessionActionsPop
 import { useSessionActionAlert } from '@/hooks/useSessionQuickActions';
 import { projectLabel } from '@/utils/projectLabel';
 import { usePinnedAvatar } from '@/hooks/usePinnedAvatar';
+import { useIdenticonSeed } from '@/hooks/useIdenticonSeed';
 import { useSettingMutable } from '@/sync/storage';
 import { t } from '@/text';
 import { isTouchWeb } from '@/utils/isTouchWeb';
@@ -352,22 +353,37 @@ export function SessionsList() {
                         )}
                     </View>
                 );
-                // Pinned has nothing to collapse, so its press switches how
-                // it is ordered instead, and says which order it is in.
+                // Pinned and Unpinned: the TITLE folds the section, and the
+                // order label beside it is its own target. One press used to
+                // do both jobs at once — it switched the order, which meant
+                // there was no way to fold the flat half of the list away.
                 if (item.sortMode) {
                     return (
-                        <Pressable
-                            onPress={togglePinnedSort}
-                            accessibilityRole="button"
-                            style={styles.headerSection}
-                        >
+                        <View style={styles.headerSection}>
                             <View style={styles.headerRow}>
-                                <Text style={styles.headerText}>{item.title}</Text>
-                                <Text style={styles.headerCount}>
-                                    {item.sortMode === 'state' ? t('sidebar.sortByState') : t('sidebar.sortByProject')}
-                                </Text>
+                                <Pressable
+                                    onPress={() => toggleSection(item.sectionKey!)}
+                                    accessibilityRole="button"
+                                    accessibilityState={{ expanded: !item.collapsed }}
+                                    hitSlop={6}
+                                    style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1 }}
+                                >
+                                    <Ionicons
+                                        name={item.collapsed ? 'chevron-forward' : 'chevron-down'}
+                                        size={12}
+                                        style={styles.headerChevron}
+                                    />
+                                    <Text style={styles.headerText}>{item.title}</Text>
+                                    {!!dot && <View style={[styles.headerDot, { backgroundColor: dot }]} />}
+                                    {item.count != null && <Text style={styles.headerCount}>{item.count}</Text>}
+                                </Pressable>
+                                <Pressable onPress={togglePinnedSort} accessibilityRole="button" hitSlop={6}>
+                                    <Text style={styles.headerCount}>
+                                        {item.sortMode === 'state' ? t('sidebar.sortByState') : t('sidebar.sortByProject')}
+                                    </Text>
+                                </Pressable>
                             </View>
-                        </Pressable>
+                        </View>
                     );
                 }
                 if (!item.sectionKey) {
@@ -590,6 +606,7 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle, 
     // Pins carry their own size and shape (Appearance → Pinned rows): they sit
     // above everything and are one line tall where an ordinary row is three.
     const pinnedAvatar = usePinnedAvatar();
+    const identiconFor = useIdenticonSeed();
 
     // The compact form drops the status sentence and keeps what
     // identifies the row: a small avatar, the name, and the dot. A pin is a
@@ -614,7 +631,7 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle, 
                     {...menuProps}
                 >
                     <Avatar
-                        id={session.avatarId}
+                        id={identiconFor(session)}
                         size={pinnedAvatar.size}
                         variant={pinnedAvatar.variant}
                         monochrome={!status.isConnected}
@@ -675,7 +692,7 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle, 
             {...menuProps}
         >
             <View style={styles.avatarContainer}>
-                <Avatar id={session.avatarId} size={32} monochrome={!status.isConnected} flavor={session.flavor} />
+                <Avatar id={identiconFor(session)} size={32} monochrome={!status.isConnected} flavor={session.flavor} />
                 {session.hasDraft && (
                     <View style={styles.draftIconContainer}>
                         <Ionicons

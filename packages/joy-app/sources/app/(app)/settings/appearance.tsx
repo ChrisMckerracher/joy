@@ -7,7 +7,7 @@ import { applyAppearance, applyDarkAppearance } from '@/palettes';
 import { useRouter } from 'expo-router';
 import { useUnistyles, UnistylesRuntime, StyleSheet } from 'react-native-unistyles';
 import { Switch } from '@/components/Switch';
-import { AvatarSquares, AvatarCircles } from '@/components/AvatarIdenticon';
+import { AvatarSquares, AvatarCircles, AvatarIdenticon } from '@/components/AvatarIdenticon';
 import { clampSessionAvatarSize, AVATAR_SIZE_MIN, AVATAR_SIZE_MAX, AVATAR_SIZE_STEP } from '@/hooks/useSessionAvatarSize';
 import { clampMachineIconSize, MACHINE_ICON_MIN, MACHINE_ICON_MAX, MACHINE_ICON_STEP } from '@/hooks/useMachineIconSize';
 import { clampPinnedAvatarSize, PINNED_AVATAR_MIN, PINNED_AVATAR_MAX, PINNED_AVATAR_STEP } from '@/hooks/usePinnedAvatar';
@@ -68,6 +68,7 @@ export default function AppearanceSettingsScreen() {
     const [pinnedAvatarSizeRaw, setPinnedAvatarSize] = useLocalSettingMutable('pinnedAvatarSize');
     const pinnedAvatarPx = clampPinnedAvatarSize(pinnedAvatarSizeRaw);
     const [pinnedAvatarShape, setPinnedAvatarShape] = useLocalSettingMutable('pinnedAvatarShape');
+    const [identiconSeed, setIdenticonSeed] = useLocalSettingMutable('identiconSeed');
     const PinnedPreview = (pinnedAvatarShape === 'match' ? avatarVariant : pinnedAvatarShape) === 'squares'
         ? AvatarSquares
         : AvatarCircles;
@@ -180,6 +181,36 @@ export default function AppearanceSettingsScreen() {
                     )}
                     showChevron={false}
                 />
+            </ItemGroup>
+
+            {/* What a face MEANS. The grid has always been drawn from the
+                machine and the folder together, so one checkout on one box
+                wears one face wherever it appears. The other three trade that
+                for a coarser grouping you can read straight down a column:
+                every session its own, every machine its own, every agent its
+                own. Previews are live, and use this device's real values so
+                the choice is made against what you will see. */}
+            <ItemGroup title="What an identicon means" footer="What the generated face is drawn from. Sessions that share it wear the same face.">
+                {([
+                    { key: 'project' as const, name: 'Project', detail: 'One face per folder on a machine', sample: 'faraz-vip:/home/claude/Workspace/joy' },
+                    { key: 'session' as const, name: 'Session', detail: 'Every session its own face', sample: 'c6787bf4' },
+                    { key: 'machine' as const, name: 'Machine', detail: 'One face per machine', sample: 'machine:faraz-vip' },
+                    { key: 'agent' as const, name: 'Agent', detail: 'One face per agent — claude, codex, opencode, pi, agy', sample: 'agent:claude' },
+                ]).map(({ key, name, detail, sample }) => (
+                    <Item
+                        key={key}
+                        title={name}
+                        subtitle={detail}
+                        icon={<View style={{ width: 29, alignItems: 'center' }}>
+                            <AvatarIdenticon id={sample} size={avatarSizePx} />
+                        </View>}
+                        rightElement={identiconSeed === key
+                            ? <Ionicons name="checkmark" size={18} color={theme.colors.textLink} />
+                            : undefined}
+                        showChevron={false}
+                        onPress={() => setIdenticonSeed(key)}
+                    />
+                ))}
             </ItemGroup>
 
             {/* Theme Settings */}

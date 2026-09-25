@@ -677,6 +677,7 @@ export const ca: TranslationStructure = {
         unpin: 'No fixis',
         noMachine: 'Sense màquina',
         pinned: 'Fixades',
+        unpinned: 'La resta',
         automations: 'Automatitzacions',
         automationFailures: 'Errors d\'automatització',
         showAutomations: 'Mostra automatitzacions',

@@ -29,6 +29,10 @@ export const LocalSettingsSchema = z.object({
     // Session list v2 — the flag this whole thing sits behind.
     sessionListV2: z.boolean().describe('Session list: pinning, a switchable grouping axis, collapsible groups and filters'),
     collapsedSessionGroups: z.array(z.string()).describe('Collapsed section keys. Device-local: a phone wants far more collapsed than a wide desktop'),
+    // Two lists, because the two halves of the list have opposite defaults:
+    // Pinned and Unpinned are open until you shut them, machine sections are
+    // shut until you open them. One list could not say which state was chosen.
+    expandedSessionGroups: z.array(z.string()).describe('Machine sections the user opened. They repeat the flat list above, so they start collapsed'),
     pinnedSort: z.enum(['project', 'state']).describe('Pinned order: by what needs you first (default), or by project name'),
     diffWholeFile: z.boolean().describe('Changes view: show each change against the complete file instead of the patch hunks. Device-local — diffStyle (unified/split) stays the synced preference this returns to.'),
     chatFontScale: z.number().describe('Chat message text scale multiplier (1 = 100%), clamped to [0.8, 1.4]'),
@@ -38,6 +42,10 @@ export const LocalSettingsSchema = z.object({
     // .catch: a value retired from this enum (the old 'hashicon') is coerced
     // rather than treated as invalid, so the preference survives an upgrade.
     avatarVariant: z.enum(['circles', 'squares']).catch('circles').describe('Identicon style: circular (default) or square confetti grid'),
+    // What the identicon STANDS FOR. Per session it is an identity; per
+    // machine, project or agent it becomes a grouping you can read down a
+    // column of rows without looking at the text.
+    identiconSeed: z.enum(['project', 'session', 'machine', 'agent']).catch('project').describe("What an identicon stands for: its project (default — machine + folder), the session itself, its machine, or its agent"),
     sessionAvatarSize: z.number().describe('Session-list identicon size in px, clamped to [8, 24]'),
     machineIconSize: z.number().describe('Machine-separator glyph size in px, clamped to [7, 16]'),
     pinnedAvatarSize: z.number().describe('Pinned-row identicon size in px, clamped to [8, 24]'),
@@ -72,6 +80,7 @@ export const localSettingsDefaults: LocalSettings = {
     fileViewerWrap: true,
     sessionListV2: false,
     collapsedSessionGroups: [],
+    expandedSessionGroups: [],
     pinnedSort: 'state' as const,
     diffWholeFile: false,
     chatFontScale: 1,
@@ -85,6 +94,7 @@ export const localSettingsDefaults: LocalSettings = {
     acknowledgedCliVersions: {},
     appLock: false,
     avatarVariant: 'circles',
+    identiconSeed: 'project' as const,
     sessionAvatarSize: 16,
     machineIconSize: 9,
     pinnedAvatarSize: 16,

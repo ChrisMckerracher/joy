@@ -15,6 +15,7 @@ import { useAllMachines, useLocalSettingMutable } from '@/sync/storage';
 import { useSessionGitStatusLive } from '@/sync/gitStatusResource';
 import { knownLines } from '@/sync/gitStatusModel';
 import { useSessionAvatarSize } from '@/hooks/useSessionAvatarSize';
+import { useIdenticonSeed } from '@/hooks/useIdenticonSeed';
 import { useMachineIconSize } from '@/hooks/useMachineIconSize';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
@@ -106,6 +107,7 @@ const SectionHeader = React.memo(({ session, displayPath }: { session: SessionRo
     const [isHovered, setIsHovered] = React.useState(false);
     // Identicon size — Appearance → Identicons (clamped on read; default 16).
     const avatarSize = useSessionAvatarSize();
+    const identiconFor = useIdenticonSeed();
     // The identicon sits on the same column as the session rows' status icon:
     // card margin 16 + row padding 14 + half the 16px indicator slot = 38, so
     // both marks share a center line down the list. Text still starts at the
@@ -127,7 +129,7 @@ const SectionHeader = React.memo(({ session, displayPath }: { session: SessionRo
         >
             {/* Avatar — centered on the session rows' status-icon column */}
             <View style={[styles.sectionHeaderAvatar, { width: avatarSlotWidth }]}>
-                <Avatar id={session.avatarId} size={avatarSize} flavor={null} />
+                <Avatar id={identiconFor(session)} size={avatarSize} flavor={null} />
             </View>
 
             {/* Path + branch */}
@@ -279,15 +281,21 @@ export const MachineSeparator = React.memo(({ machineName, machineId, cpu, ram, 
 export function ActiveSessionsGroupCompact({ sessions, selectedSessionId }: ActiveSessionsGroupProps) {
     const styles = stylesheet;
     const machines = useAllMachines();
-    // Same keys the session-list sections use (`m:<id>`), so folding a machine
-    // away folds it away everywhere it appears rather than once per list.
-    const [collapsedSections, setCollapsedSections] = useLocalSettingMutable('collapsedSessionGroups');
+    // These machine groups REPEAT the flat Pinned/Unpinned list above them, so
+    // they start shut and remember being opened — the opposite default from
+    // the flat sections, which is why the two live in different lists
+    // (sessionListModel.ts). Keys stay `m:<id>`, so opening a machine opens it
+    // everywhere it appears rather than once per list.
+    const [expandedSections, setExpandedSections] = useLocalSettingMutable('expandedSessionGroups');
+    const isOpen = React.useCallback(
+        (machineId: string) => expandedSections.indexOf(`m:${machineId}`) !== -1,
+        [expandedSections]);
     const toggleMachine = React.useCallback((machineId: string) => {
         const key = `m:${machineId}`;
-        setCollapsedSections(collapsedSections.indexOf(key) === -1
-            ? [...collapsedSections, key]
-            : collapsedSections.filter((k: string) => k !== key));
-    }, [collapsedSections, setCollapsedSections]);
+        setExpandedSections(expandedSections.indexOf(key) === -1
+            ? [...expandedSections, key]
+            : expandedSections.filter((k: string) => k !== key));
+    }, [expandedSections, setExpandedSections]);
 
     const machinesMap = React.useMemo(() => {
         const map: Record<string, Machine> = {};
@@ -359,7 +367,7 @@ export function ActiveSessionsGroupCompact({ sessions, selectedSessionId }: Acti
                 const sortedProjects = Array.from(machineGroup.projects.entries()).sort(
                     ([, a], [, b]) => a.displayPath.localeCompare(b.displayPath)
                 );
-                const collapsed = collapsedSections.indexOf(`m:${machineGroup.machineId}`) !== -1;
+                const collapsed = !isOpen(machineGroup.machineId);
                 const all = sortedProjects.flatMap(([, pg]) => pg.sessions);
                 let worst: SessionState | null = null;
                 for (const s of all) {

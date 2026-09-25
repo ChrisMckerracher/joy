@@ -678,6 +678,7 @@ export const zhHans: TranslationStructure = {
         unpin: '取消置顶',
         noMachine: '无机器',
         pinned: '已置顶',
+        unpinned: '其他会话',
         automations: '自动化',
         automationFailures: '自动化失败',
         showAutomations: '显示自动化',

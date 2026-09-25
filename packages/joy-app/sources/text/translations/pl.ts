@@ -693,6 +693,7 @@ export const pl: TranslationStructure = {
         unpin: 'Odepnij',
         noMachine: 'Bez maszyny',
         pinned: 'Przypięte',
+        unpinned: 'Pozostałe',
         automations: 'Automatyzacje',
         automationFailures: 'Błędy automatyzacji',
         showAutomations: 'Pokaż automatyzacje',

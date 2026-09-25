@@ -726,6 +726,7 @@ export const en = {
         unpin: 'Unpin',
         noMachine: 'No machine',
         pinned: 'Pinned',
+        unpinned: 'Everything else',
         automations: 'Automations',
         automationFailures: 'Automation failures',
         showAutomations: 'Show automations',

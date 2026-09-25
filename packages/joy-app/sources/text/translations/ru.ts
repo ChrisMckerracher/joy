@@ -693,6 +693,7 @@ export const ru: TranslationStructure = {
         unpin: 'Открепить',
         noMachine: 'Без машины',
         pinned: 'Закреплённые',
+        unpinned: 'Остальные',
         automations: 'Автоматизации',
         automationFailures: 'Сбои автоматизаций',
         showAutomations: 'Показать автоматизации',

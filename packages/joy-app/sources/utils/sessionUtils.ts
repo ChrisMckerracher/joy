@@ -1,3 +1,4 @@
+import { avatarIdFor } from './avatarId';
 import { safeGet } from '@/utils/safeGet';
 import * as React from 'react';
 import { Session } from '@/sync/storageTypes';
@@ -136,13 +137,16 @@ export function getSessionName(session: Session): string {
  * Generates a deterministic avatar ID from machine ID and path.
  * This ensures the same machine + path combination always gets the same avatar.
  */
+/** The stored, project-seeded id — what everything outside the session list
+ *  still means by "this session's avatar". The list re-seeds at render time
+ *  from the same parts (see hooks/useIdenticonSeed). */
 export function getSessionAvatarId(session: Session): string {
-    if (session.metadata?.machineId && session.metadata?.path) {
-        // Combine machine ID and path for a unique, deterministic avatar
-        return `${session.metadata.machineId}:${session.metadata.path}`;
-    }
-    // Fallback to session ID if metadata is missing
-    return session.id;
+    return avatarIdFor({
+        id: session.id,
+        machineId: session.metadata?.machineId,
+        path: session.metadata?.path,
+        flavor: session.metadata?.flavor,
+    });
 }
 
 /**

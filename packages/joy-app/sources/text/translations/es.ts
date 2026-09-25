@@ -677,6 +677,7 @@ export const es: TranslationStructure = {
         unpin: 'No fijar',
         noMachine: 'Sin máquina',
         pinned: 'Fijadas',
+        unpinned: 'Todo lo demás',
         automations: 'Automatizaciones',
         automationFailures: 'Fallos de automatización',
         showAutomations: 'Mostrar automatizaciones',
