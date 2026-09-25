@@ -1,3 +1,4 @@
+import { en } from '../_default';
 /**
  * Japanese translations for the Joy app
  * Values can be:
@@ -18,6 +19,8 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
 }
 
 export const ja: TranslationStructure = {
+    // Pocket TTS copy falls back to English until localized.
+    pocketVoice: en.pocketVoice,
     tabs: {
         // Tab navigation labels
         sessions: 'ターミナル',
@@ -126,7 +129,7 @@ export const ja: TranslationStructure = {
         appearance: '外観',
         appearanceSubtitle: 'アプリの見た目をカスタマイズ',
         voice: '音声',
-        voiceSubtitle: 'ElevenLabs エージェント経由でセッションと話す',
+        voiceSubtitle: 'Pocket TTS でセッションの更新を読み上げる',
         models: 'モデル',
         modelsSubtitle: '各エージェントの選択肢に表示するモデル',
         mods: 'Mods',

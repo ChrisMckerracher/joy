@@ -15,6 +15,22 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
 }
 
 export const en = {
+    pocketVoice: {
+        start: 'Enable spoken session updates',
+        enabled: 'Spoken updates on',
+        description: 'Read completed replies, questions and approval alerts from the selected session. Pocket TTS generates speech only; answer and approve in the app.',
+        setup: 'Speech on this device',
+        setupInstructions: 'Tap the speaker in a session to enable Pocket TTS. The first use downloads about 132–134 MB of model and voice data; use Wi-Fi if needed. Later uses load the saved model. A browser may clear its cache when storage is low.',
+        privacy: 'Speech is generated on this phone or computer. Session text is never sent to a speech service. The first download contacts Hugging Face for model files. Speech stops when you change sessions or leave the app.',
+        unavailable: 'Pocket TTS could not run on this device.',
+        loading: ({ percent }: { percent: number }) => `Loading local speech: ${percent}%`,
+        licenses: 'Model, voice and runtime licenses',
+        failed: 'Speech unavailable',
+        welcome: 'Spoken updates are on. Reply and approve requests in the app.',
+        approval: ({ tool }: { tool: string }) => `Permission requested for ${tool}. Review and approve or deny in the app.`,
+        answerInApp: 'Choose your answer in the app.',
+        ready: 'The session has finished working.',
+    },
     tabs: {
         // Tab navigation labels
         sessions: 'Terminals',
@@ -123,7 +139,7 @@ export const en = {
         appearance: 'Appearance',
         appearanceSubtitle: 'Customize how the app looks',
         voice: 'Voice',
-        voiceSubtitle: 'Talk to your sessions through your ElevenLabs agent',
+        voiceSubtitle: 'Read session updates aloud with Pocket TTS',
         models: 'Models',
         modelsSubtitle: 'Which models each agent\'s pickers offer',
         mods: 'Mods',

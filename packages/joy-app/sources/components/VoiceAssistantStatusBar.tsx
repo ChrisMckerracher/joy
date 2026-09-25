@@ -1,20 +1,14 @@
-/**
- * Voice status strip under the chat header (phone) or in the sidebar
- * (tablet/desktop). Three states: connecting, live, standing by (armed but
- * hung up). In standby mode a tap toggles live ↔ standing by and the × ends
- * voice for good; in classic mode there is nothing to stand by for, so a tap
- * on a live call ends it too.
- */
 import * as React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { useRealtimeStatus, useRealtimeMode, useVoiceArmedSessionId, useSetting } from '@/sync/storage';
+import { useRealtimeStatus, useRealtimeMode, useVoiceArmedSessionId } from '@/sync/storage';
 import { StatusDot } from './StatusDot';
 import { Typography } from '@/constants/Typography';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { endVoice, hangUp, startVoice } from '@/realtime/RealtimeSession';
+import { endVoice, startVoice } from '@/realtime/RealtimeSession';
 import { useUnistyles } from 'react-native-unistyles';
 import { VoiceBars } from './VoiceBars';
 import { t } from '@/text';
+import { usePocketProgress } from '@/realtime/pocket/progress';
 
 interface VoiceAssistantStatusBarProps {
     variant?: 'full' | 'sidebar';
@@ -26,8 +20,8 @@ export const VoiceAssistantStatusBar = React.memo(({ variant = 'full', style }: 
     const realtimeStatus = useRealtimeStatus();
     const realtimeMode = useRealtimeMode();
     const armedSessionId = useVoiceArmedSessionId();
-    const wakeOnSound = useSetting('voiceWakeOnSound');
-    const classic = useSetting('voiceMode') !== 'standby';
+    const percent = usePocketProgress();
+
 
     if (realtimeStatus === 'disconnected' && armedSessionId === null) {
         return null;
@@ -42,11 +36,11 @@ export const VoiceAssistantStatusBar = React.memo(({ variant = 'full', style }: 
     switch (realtimeStatus) {
         case 'connecting':
             color = theme.colors.status.connecting; pulsing = true;
-            text = t('voice.statusConnecting'); hint = '';
+            text = t('pocketVoice.loading', { percent }); hint = t('voice.tapToEnd');
             break;
         case 'connected':
             color = theme.colors.status.connected;
-            text = t('voice.statusLive'); hint = classic ? t('voice.tapToEnd') : t('voice.tapToPause');
+            text = t('pocketVoice.enabled'); hint = t('voice.tapToEnd');
             break;
         case 'error':
             color = theme.colors.status.error;
@@ -54,12 +48,12 @@ export const VoiceAssistantStatusBar = React.memo(({ variant = 'full', style }: 
             break;
         default:
             color = theme.colors.status.default;
-            text = t('voice.statusArmed'); hint = !classic && wakeOnSound ? t('voice.listeningHint') : t('voice.tapToTalk');
+            text = t('pocketVoice.enabled'); hint = t('voice.tapToEnd');
     }
 
     const handlePress = () => {
-        if (realtimeStatus === 'connecting') return;
-        if (realtimeStatus === 'connected') { void (classic ? endVoice() : hangUp()); return; }
+        if (realtimeStatus === 'connecting') { endVoice(); return; }
+        if (realtimeStatus === 'connected') { void endVoice(); return; }
         if (armedSessionId) void startVoice(armedSessionId);
     };
     const handleEnd = () => { void endVoice(); };
@@ -71,7 +65,7 @@ export const VoiceAssistantStatusBar = React.memo(({ variant = 'full', style }: 
                 <View style={styles.content}>
                     <View style={styles.leftSection}>
                         <StatusDot color={color} isPulsing={pulsing} size={8} style={styles.statusDot} />
-                        <Ionicons name={realtimeStatus === 'connected' ? 'mic' : 'mic-outline'} size={16} color={theme.colors.text} style={styles.micIcon} />
+                        <Ionicons name="volume-high-outline" size={16} color={theme.colors.text} style={styles.micIcon} />
                         <Text style={[styles.statusText, !isFull && styles.sidebarStatusText, { color: theme.colors.text }]} numberOfLines={1}>
                             {text}
                         </Text>

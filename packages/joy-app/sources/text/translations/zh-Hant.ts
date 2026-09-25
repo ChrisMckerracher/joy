@@ -1,3 +1,4 @@
+import { en } from '../_default';
 /**
  * Chinese (Traditional) translations for the Joy app
  * Values can be:
@@ -17,6 +18,8 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
 }
 
 export const zhHant: TranslationStructure = {
+    // Pocket TTS copy falls back to English until localized.
+    pocketVoice: en.pocketVoice,
     tabs: {
         // Tab navigation labels
         sessions: '終端',
@@ -125,7 +128,7 @@ export const zhHant: TranslationStructure = {
         appearance: '外觀',
         appearanceSubtitle: '自訂應用程式外觀',
         voice: '語音',
-        voiceSubtitle: '透過你的 ElevenLabs 代理與工作階段對話',
+        voiceSubtitle: '使用 Pocket TTS 朗讀工作階段更新',
         models: '模型',
         modelsSubtitle: '每個代理的選擇器提供哪些模型',
         mods: 'Mods',

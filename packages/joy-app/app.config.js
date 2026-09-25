@@ -152,6 +152,7 @@ export default {
         },
         plugins: [
             require("./plugins/withEinkCompatibility.js"),
+            require("./plugins/withPocketRuntime.js"),
             [
                 "expo-router",
                 {
@@ -164,11 +165,7 @@ export default {
             "expo-secure-store",
             "expo-web-browser",
             "@more-tech/react-native-libsodium",
-            // Voice (ElevenLabs over LiveKit/WebRTC). Native modules — a change
-            // here needs a new native build, not an OTA.
-            "react-native-audio-api",
-            "@livekit/react-native-expo-plugin",
-            "@config-plugins/react-native-webrtc",
+            // Speech playback uses expo-audio.
             [
                 "expo-audio",
                 {
