@@ -59,8 +59,21 @@ Alternatively, from the laptop run `ssh -N -L 3210:127.0.0.1:3210 agent-01` and
 visit http://localhost:3210, which browsers treat as a secure context. Browser
 accounts and model caches are stored per origin, so choose one URL for testing.
 
-Create a test account in the web app. Pair the daemon using that account's
-backup code in a terminal on the VM, then restart it to load the pairing:
+Create a test account in the web app. A fresh daemon does not appear in the
+machine picker until paired. Run this on the VM, then open the printed link
+in the same browser origin where you are logged in and accept the connection:
+
+```sh
+podman exec joy-pocket-daemon node --import tsx /repo/dev/pocket-stack/pair-daemon.mjs https://10.77.0.182:3443 && podman restart joy-pocket-daemon
+```
+
+The helper uses Joy's existing terminal approval protocol and proof of key
+possession, waits up to ten minutes, and refuses to overwrite an existing
+pairing. It is intended for this isolated, initially ungated test relay. If
+using a static relay gate, set `JOY_RELAY_ACCESS_KEY` in the daemon too.
+
+Alternatively, pair with your account backup code at the CLI prompt. Agent
+login is separate from Joy pairing:
 
 ```sh
 podman exec -it joy-pocket-daemon node bin/joy.mjs auth http://joy-pocket-relay:3105
