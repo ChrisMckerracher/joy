@@ -3,7 +3,7 @@ import { createDownloadResumable } from 'expo-file-system/legacy';
 import { digest, CryptoDigestAlgorithm } from 'expo-crypto';
 import assets from './assets.json';
 import bundle from './bundle.json';
-import { PocketEngine, checkAborted, type Progress } from './core';
+import { PocketEngine, checkAborted, type Progress, type AudioChunk } from './core';
 import { reportPocketProgress } from './progress';
 
 // One engine at a time. A stopped native inference call must finish before its
@@ -64,7 +64,7 @@ export function createPocketSpeech() {
             });
             return operation as Promise<void>;
         },
-        generate(text: string, signal: AbortSignal): Promise<Uint8Array> {
+        generate(text: string, signal: AbortSignal, _onChunk?: AudioChunk): Promise<Uint8Array> {
             const abort = () => controller.abort();
             if (signal.aborted) abort();
             signal.addEventListener('abort', abort, { once: true });

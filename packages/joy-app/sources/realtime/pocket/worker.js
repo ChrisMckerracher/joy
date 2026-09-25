@@ -4,8 +4,9 @@ import { PocketEngine } from './core.js';
 let engine;
 const controller = new AbortController();
 ort.env.wasm.wasmPaths = new URL('./ort/', import.meta.url).href;
-// A single WASM worker works without COOP/COEP or SharedArrayBuffer.
-ort.env.wasm.numThreads = 1;
+// Shared WASM memory needs COOP/COEP. Keep a fallback for other app hosts.
+ort.env.wasm.numThreads = self.crossOriginIsolated
+    ? Math.min(4, Math.max(1, Math.floor((navigator.hardwareConcurrency || 2) / 2))) : 1;
 const progress = (file, loaded, total) => self.postMessage({ type: 'progress', file, loaded, total });
 let handling = false;
 self.onmessage = async ({ data }) => {
@@ -58,7 +59,10 @@ self.onmessage = async ({ data }) => {
             self.postMessage({ id });
         } else if (type === 'generate') {
             if (!engine) throw new Error('Pocket TTS has not loaded.');
-            const audio = await engine.generate(data.text, controller.signal);
+            const onChunk = data.stream ? (pcm, sampleRate) => {
+                self.postMessage({ id, type: 'audio', pcm, sampleRate }, [pcm.buffer]);
+            } : undefined;
+            const audio = await engine.generate(data.text, controller.signal, onChunk);
             self.postMessage({ id, audio }, [audio.buffer]);
         } else throw new Error('Unknown speech request.');
     } catch (error) {

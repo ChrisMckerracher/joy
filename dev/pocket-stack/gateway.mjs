@@ -30,6 +30,9 @@ const handleRequest = async (req, res) => {
       return;
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405).end(); return; }
+    // Enable shared WASM memory for Pocket's CPU thread pool, including workers.
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
     const name = decodeURIComponent(url.pathname);
     let file = path.resolve(root, '.' + name);
     if (!file.startsWith(root + path.sep) && file !== root) { res.writeHead(404).end(); return; }

@@ -125,11 +125,12 @@ export class PocketEngine {
         if (current) result.push(current);
         return result;
     }
-    async generate(text, signal) {
+    async generate(text, signal, onChunk) {
         if (this.busy) throw new Error('Pocket TTS is already speaking.');
         this.busy = true;
         const audio = [];
         const b = this.bundle;
+        const emit = pcm => { if (onChunk) onChunk(pcm, b.sample_rate); else audio.push(pcm); };
         try {
             checkAborted(signal);
             const chunks = this.chunks(text.slice(0, 500));
@@ -174,7 +175,7 @@ export class PocketEngine {
                         pending.forEach((v, i) => values.set(v, i * b.latent_dim));
                         const decoderInput = this.tensor('float32', values, [1, pending.length, b.latent_dim]);
                         const decoded = await this.run('mimi_decoder', { latent: decoderInput, ...mimi }, signal);
-                        audio.push(new Float32Array(decoded[this.sessions.mimi_decoder.outputNames[0]].data));
+                        emit(new Float32Array(decoded[this.sessions.mimi_decoder.outputNames[0]].data));
                         this.update(mimi, decoded, b.mimi_state_manifest); this.release(decoderInput); pending = [];
                     }
                     if (stop) break;
@@ -182,9 +183,9 @@ export class PocketEngine {
                     await new Promise(resolve => setTimeout(resolve, 0));
                 }
                 this.release(...this.tensors);
-                if (index < chunks.length - 1) audio.push(new Float32Array(b.sample_rate / 4));
+                if (index < chunks.length - 1) emit(new Float32Array(b.sample_rate / 4));
             }
-            checkAborted(signal); return pcmToWav(audio, b.sample_rate);
+            checkAborted(signal); return onChunk ? new Uint8Array() : pcmToWav(audio, b.sample_rate);
         } finally { this.release(...this.tensors); this.busy = false; }
     }
     async dispose() {

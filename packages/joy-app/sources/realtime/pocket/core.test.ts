@@ -77,3 +77,28 @@ test('long Unicode words are chunked by characters and fit the token limit', () 
         expect(chunk).not.toMatch(/[\uD800-\uDBFF]$/);
     }
 });
+
+test('streams PCM while inference is still running without building a second WAV', async () => {
+    const { engine, tensors, run } = fixture();
+    const infer = run.getMockImplementation()!; let frames = 0;
+    run.mockImplementation(async inputs => {
+        const result = await infer(inputs);
+        if (result.eos_logit && ++frames < 24) result.eos_logit.data[0] = -10;
+        return result;
+    });
+    const streamed: Float32Array[] = []; let callsAtFirstChunk = 0;
+    const wav = await engine.generate('Hi', new AbortController().signal, (pcm, rate) => {
+        expect(rate).toBe(24000); streamed.push(pcm);
+        if (!callsAtFirstChunk) callsAtFirstChunk = run.mock.calls.length;
+    });
+    expect(streamed.length).toBeGreaterThan(1);
+    expect(callsAtFirstChunk).toBeLessThan(run.mock.calls.length);
+    expect(Array.from(streamed[0])).toEqual([0.25, -0.25]);
+    expect(wav).toHaveLength(0); expect(tensors.every(t => t.disposed)).toBe(true);
+});
+test('a streaming consumer failure releases inference state and permits retry', async () => {
+    const { engine, tensors } = fixture();
+    await expect(engine.generate('Hi', new AbortController().signal, () => { throw new Error('playback failed'); })).rejects.toThrow('playback failed');
+    expect(tensors.every(t => t.disposed)).toBe(true);
+    await expect(engine.generate('Hi', new AbortController().signal)).resolves.toBeInstanceOf(Uint8Array);
+});

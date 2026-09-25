@@ -1,9 +1,16 @@
 /** A bounded, expiring speech queue. Stopping retires both generated audio
  * and playback, even if a transport ignores cancellation and resolves late. */
 export interface SpeechItem { key: string; text: string; valid?: () => boolean }
+export type AudioChunk = (pcm: Float32Array, sampleRate: number) => void;
+export interface SpeechStream {
+    push: AudioChunk;
+    finish(): Promise<void>;
+    cancel(): void;
+}
 export interface SpeechOutput {
     prepare(): Promise<void>;
     play(wav: Uint8Array, signal: AbortSignal): Promise<void>;
+    stream?(signal: AbortSignal, onStart: () => void): SpeechStream;
     dispose(): void;
 }
 export class SpeechQueue {
@@ -11,7 +18,7 @@ export class SpeechQueue {
     private controller = new AbortController();
     private running = false;
     constructor(
-        private generate: (text: string, signal: AbortSignal) => Promise<Uint8Array>,
+        private generate: (text: string, signal: AbortSignal, onChunk?: AudioChunk) => Promise<Uint8Array>,
         private output: SpeechOutput,
         private mode: (speaking: boolean) => void,
         private failed: (error: unknown) => void,
@@ -36,12 +43,24 @@ export class SpeechQueue {
             while (this.pending.length && !signal.aborted) {
                 const item = this.pending.shift()!;
                 if (Date.now() - item.at > 30_000 || item.valid?.() === false) continue;
-                const wav = await this.generate(item.text, signal);
-                if (signal.aborted) return;
-                if (Date.now() - item.at > 30_000 || item.valid?.() === false) continue;
-                this.mode(true);
-                await this.output.play(wav, signal);
-                if (!signal.aborted) this.mode(false);
+                let started = false;
+                let stale = false;
+                const stream = this.output.stream?.(signal, () => { started = true; this.mode(true); });
+                const valid = () => !signal.aborted && !stale && item.valid?.() !== false
+                    && (started || Date.now() - item.at <= 30_000);
+                try {
+                    const onChunk: AudioChunk | undefined = stream ? (pcm, rate) => {
+                        if (!valid()) { stale = true; stream.cancel(); return; }
+                        stream.push(pcm, rate);
+                    } : undefined;
+                    const wav = await this.generate(item.text, signal, onChunk);
+                    if (!valid()) continue;
+                    if (stream) await stream.finish();
+                    else { this.mode(true); await this.output.play(wav, signal); }
+                } finally {
+                    stream?.cancel();
+                    if (!signal.aborted) this.mode(false);
+                }
             }
         } catch (error) {
             if (!signal.aborted) { this.stop(); this.failed(error); }

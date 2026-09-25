@@ -6,7 +6,7 @@ This draft implements speech output. It removes the ElevenLabs conversation serv
 
 ## Runs inside the client
 
-The iOS/Android app uses a bundled native ONNX Runtime. The web client uses a bundled WebAssembly runtime in a dedicated worker. Both execute the same Pocket TTS inference locally. No Python installation, Docker container, Pocket server, daemon speech endpoint or API key is needed.
+The iOS/Android app uses a bundled native ONNX Runtime. The web client uses a bundled WebAssembly runtime in a dedicated worker. It uses up to four CPU threads when the host enables cross-origin isolation; otherwise it falls back to one thread. Both execute the same Pocket TTS inference locally. No Python installation, Docker container, Pocket server, daemon speech endpoint or API key is needed.
 
 First activation downloads approximately **132–134 MB** of pinned English model and voice data from Hugging Face. A progress indicator appears while loading; × cancels. Native model files are saved in app storage, and browsers use Cache Storage when available. Downloads are checked against pinned sizes and SHA-256 hashes before use. Interrupted downloads are never treated as complete. The browser revalidates cached files; native storage commits only verified downloads.
 
@@ -20,13 +20,22 @@ Text remains on the device during speech synthesis. Only static model downloads 
 
 - Only the selected session speaks. Reasoning and incremental text are not read. Completed replies are shortened to about 400 characters; this is an excerpt, not an AI summary. Code blocks, internal markup and file/image payloads are omitted.
 - Pending approvals announce the tool name without its arguments. Approvals answered before playback are discarded. Choice questions include their options; answer in the app.
-- Speech is serialized, bounded to eight queued clips and expires after 30 seconds. Stop cancels model loading, retires generation and prevents late audio from playing. Native inference already in progress is allowed to finish its current operation before releasing the engine.
+- Speech is serialized, bounded to eight queued clips and expires after 30 seconds if playback has not started. Stop cancels model loading, retires generation and prevents late audio from playing. Native inference already in progress is allowed to finish its current operation before releasing the engine.
 - Models are unloaded when speech stops or the app backgrounds. The next activation reloads cached files; it does not keep hundreds of megabytes resident while speech is disabled.
-- Generation is limited to 500 characters and 500 audio frames (about 40 seconds). This draft buffers each short clip before playback. Slow devices may expire a queued clip before it is ready; latency and memory use need real-device validation.
+- Generation is limited to 500 characters and 500 audio frames (about 40 seconds). Web playback streams PCM as it is generated, starting after the first decoder batch (normally 0.96 seconds of audio). Native playback still buffers each short clip into a WAV. Slow devices may introduce playback gaps if generation cannot keep up; latency and memory use need real-device validation.
 
 ## Building and testing the draft
 
 The app declares `onnxruntime-web@1.24.3` and `onnxruntime-react-native@1.24.3`. The Expo config plugin also pins the Android AAR and iOS C pod to 1.24.3 instead of the vendor’s floating native versions. Use the repository's pinned package manager to install dependencies. The app postinstall runs `pocket:prepare`, which copies the installed web runtime and Joy's worker to `public/pocket` without downloading any executable code. Run `pnpm --filter joy-app pocket:prepare` after editing the shared engine or worker.
+
+For multi-threaded web synthesis, serve the app and worker with these response headers (the Podman test gateway already does):
+
+```text
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+Use HTTPS or localhost and check `crossOriginIsolated` in the browser. Cross-origin assets must support CORS or an appropriate resource policy; the pinned model downloads use CORS. Other hosts retain single-thread synthesis if isolation is unavailable.
 
 Native builds need native dependency linking and a rebuilt app; an OTA update or Expo Go alone cannot add ONNX Runtime. Web export must include the generated `/pocket` directory. Do not deploy an export that omitted this preparation step.
 
@@ -43,4 +52,6 @@ node scripts/test-pocket.mjs /path/to/models /tmp/pocket.wav
 node scripts/test-pocket-browser.cjs /path/to/models
 ```
 
-The browser test uses an installed Chrome (`CHROME_BIN` can override the executable) and a temporary profile. It serves only the test assets on loopback, plays a generated clip, blocks model downloads, and verifies that a new worker can synthesize from its cache. It does not prove native-device behavior or subjective speech quality.
+The browser test uses an installed Chrome (`CHROME_BIN` can override the executable) and a temporary profile. It serves only the test assets on loopback, plays streamed PCM before synthesis finishes, records first-audio and total generation times, blocks model downloads, and verifies that a new worker can synthesize from its cache. It does not prove native-device behavior or subjective speech quality.
+
+Set `POCKET_ISOLATED=0` to test the single-thread fallback, or `POCKET_BENCHMARK_SEED=1` for repeatable sampling noise. On the test VM, the same 3.12-second phrase took 4.84 seconds to synthesize with one thread and 3.73 seconds with four; streaming started playback after 1.37 seconds. These are warm-runtime generation timings, excluding model loading, and do not predict performance on the user's device.

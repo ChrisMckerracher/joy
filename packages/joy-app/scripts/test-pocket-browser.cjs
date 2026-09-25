@@ -8,31 +8,47 @@ const root = path.resolve(__dirname, '../public');
 const models = process.argv[2];
 if (!models) throw new Error('Usage: node scripts/test-pocket-browser.cjs MODEL_DIRECTORY');
 let denied = false, downloads = 0;
-const page = `<!doctype html><button id="go">Test local Pocket speech</button><pre id="result"></pre><script>
+const isolated = process.env.POCKET_ISOLATED !== '0';
+const ts = require('typescript');
+const playbackModule = ts.transpileModule(fs.readFileSync(path.resolve(__dirname, '../sources/realtime/speechOutput.web.ts'), 'utf8'), {
+ compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+}).outputText;
+const page = `<!doctype html><button id="go">Test local Pocket speech</button><pre id="result"></pre><script type="module">
+import {createSpeechOutput} from '/playback.js';
 let requestId=0;
 function client(){
  const worker=new Worker('/pocket/worker.js',{type:'module'}), tasks=new Map();
- worker.onmessage=({data})=>{if(data.type==='progress')return;const task=tasks.get(data.id);if(!task)return;tasks.delete(data.id);data.error?task.reject(new Error(data.error)):task.resolve(data.audio)};
+ worker.onmessage=({data})=>{if(data.type==='progress')return;const task=tasks.get(data.id);if(!task)return;if(data.type==='audio'){task.onChunk(data.pcm,data.sampleRate);return}tasks.delete(data.id);data.error?task.reject(new Error(data.error)):task.resolve(data.audio)};
  worker.onerror=e=>{for(const t of tasks.values())t.reject(new Error(e.message));tasks.clear()};
- return {worker,call:(type,payload={})=>new Promise((resolve,reject)=>{const id=++requestId;tasks.set(id,{resolve,reject});worker.postMessage({id,type,...payload})})};
+ return {worker,call:(type,payload={},onChunk)=>new Promise((resolve,reject)=>{const id=++requestId;tasks.set(id,{resolve,reject,onChunk});worker.postMessage({id,type,...payload})})};
 }
 document.querySelector('#go').onclick=async()=>{
- const ctx=new AudioContext();await ctx.resume();
+ const ctx=new AudioContext();await ctx.resume();const output=createSpeechOutput();await output.prepare();
  const started=performance.now();let c=client();
  try{
   await c.call('prepare',{voice:'alba'});const ready=performance.now();
-  const wav=await c.call('generate',{text:'Hello Chris. Pocket speech is running inside Joy.'});const generated=performance.now();
-  const decoded=await ctx.decodeAudioData(wav.buffer);
-  const source=ctx.createBufferSource();source.buffer=decoded;source.connect(ctx.destination);
-  await new Promise(resolve=>{source.onended=resolve;source.start()});
+  let firstAudio=0,audioSeconds=0,chunks=0;
+  const playback=output.stream(new AbortController().signal,()=>{firstAudio=performance.now()});
+  const wav=await c.call('generate',{text:'Hello Chris. Pocket speech is running inside Joy.',stream:true},(pcm,rate)=>{
+   chunks++;audioSeconds+=pcm.length/rate;playback.push(pcm,rate);
+  });const generated=performance.now();
+  if(!firstAudio||firstAudio>=generated||wav.length||chunks<2)throw new Error('Expected incremental PCM before generation completed');
+  await playback.finish();const played=performance.now();
   c.worker.terminate();await fetch('/deny-models');
   c=client();await c.call('prepare',{voice:'alba'});
   const second=await c.call('generate',{text:'The model is cached on this device.'});
   const cached=await ctx.decodeAudioData(second.buffer);
-  window.pocketResult={ok:true,loadSeconds:(ready-started)/1000,generationSeconds:(generated-ready)/1000,audioSeconds:decoded.duration,cachedAudioSeconds:cached.duration,sampleRate:decoded.sampleRate};
- }catch(e){window.pocketResult={ok:false,error:e.stack||String(e)}}finally{c.worker.terminate();await ctx.close();document.querySelector('#result').textContent=JSON.stringify(window.pocketResult)}
+  window.pocketResult={ok:true,loadSeconds:(ready-started)/1000,generationSeconds:(generated-ready)/1000,firstAudioSeconds:(firstAudio-ready)/1000,playbackFinishedSeconds:(played-ready)/1000,audioSeconds,chunks,cachedAudioSeconds:cached.duration,sampleRate:cached.sampleRate,crossOriginIsolated};
+ }catch(e){window.pocketResult={ok:false,error:e.stack||String(e)}}finally{c.worker.terminate();output.dispose();await ctx.close();document.querySelector('#result').textContent=JSON.stringify(window.pocketResult)}
 };</script>`;
 const server=http.createServer((req,res)=>{
+ if(isolated){res.setHeader('Cross-Origin-Opener-Policy','same-origin');res.setHeader('Cross-Origin-Embedder-Policy','require-corp');}
+ if(req.url==='/playback.js'){res.setHeader('content-type','text/javascript');res.end(playbackModule);return;}
+ if(req.url==='/pocket/worker.js' && process.env.POCKET_BENCHMARK_SEED){
+  res.setHeader('content-type','text/javascript');
+  // Deterministic noise makes benchmark comparisons use the same generated speech.
+  res.end('let seed=12345;Math.random=()=>((seed=Math.imul(seed,1664525)+1013904223>>>0)+0.5)/4294967296;\n'+fs.readFileSync(path.join(root,'pocket/worker.js'),'utf8'));return;
+ }
  if(req.url==='/'){res.setHeader('content-type','text/html');res.end(page);return;}
  if(req.url==='/deny-models'){denied=true;res.end('done');return;}
  if(req.url==='/pocket/assets.json'){

@@ -56,3 +56,35 @@ test('fails once and clears pending work after provider failure', async () => {
     queue.push({ key: '1', text: 'first' }); queue.push({ key: '2', text: 'second' }); await tick();
     expect(failed).toHaveBeenCalledOnce(); expect(output.dispose).toHaveBeenCalledOnce(); expect(generate).toHaveBeenCalledOnce();
 });
+
+test('streams before generation finishes and waits for playback before the next reply', async () => {
+    const generated = deferred<Uint8Array>(); const played = deferred<void>();
+    let chunk!: import('./speechQueue').AudioChunk;
+    const generate = vi.fn((_text: string, _signal: AbortSignal, onChunk?: import('./speechQueue').AudioChunk) => {
+        chunk = onChunk!; return generated.promise;
+    });
+    const playback = { push: vi.fn(), finish: vi.fn(() => played.promise), cancel: vi.fn() };
+    const output = { prepare: vi.fn(), play: vi.fn(), dispose: vi.fn(), stream: vi.fn((_signal, start) => {
+        playback.push.mockImplementation(() => start()); return playback;
+    }) };
+    const mode = vi.fn(); const queue = new SpeechQueue(generate, output, mode, vi.fn());
+    queue.push({ key: 'first', text: 'first' }); queue.push({ key: 'next', text: 'next' });
+    chunk(new Float32Array([0.2]), 24000);
+    expect(playback.push).toHaveBeenCalledOnce(); expect(mode).toHaveBeenLastCalledWith(true);
+    expect(playback.finish).not.toHaveBeenCalled();
+    generated.resolve(new Uint8Array()); await tick();
+    expect(playback.finish).toHaveBeenCalledOnce(); expect(generate).toHaveBeenCalledOnce();
+    played.resolve(); await tick(); expect(generate).toHaveBeenCalledTimes(2);
+    expect(output.play).not.toHaveBeenCalled();
+});
+test('stale approvals cancel streaming and discard later chunks', async () => {
+    const generated = deferred<Uint8Array>(); let chunk!: import('./speechQueue').AudioChunk;
+    const playback = { push: vi.fn(), finish: vi.fn(), cancel: vi.fn() };
+    const output = { prepare: vi.fn(), play: vi.fn(), dispose: vi.fn(), stream: vi.fn(() => playback) };
+    const queue = new SpeechQueue((_text, _signal, onChunk) => { chunk = onChunk!; return generated.promise; }, output, vi.fn(), vi.fn());
+    let valid = true; queue.push({ key: 'approval', text: 'Approve?', valid: () => valid });
+    valid = false; chunk(new Float32Array([0.2]), 24000);
+    generated.resolve(new Uint8Array()); await tick();
+    expect(playback.push).not.toHaveBeenCalled(); expect(playback.cancel).toHaveBeenCalled();
+    expect(playback.finish).not.toHaveBeenCalled();
+});
