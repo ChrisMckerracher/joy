@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+repo=$(cd "$(dirname "$0")/../.." && pwd)
+web=$(realpath "${1:?Usage: up.sh EXPORTED_WEB_DIRECTORY}")
+port=${JOY_TEST_PORT:-3210}
+bind=${JOY_TEST_BIND:-0.0.0.0}
+node_image=docker.io/library/node:22-slim
+test -f "$web/index.html"
+test -f "$web/pocket/worker.js"
+test -d "$repo/node_modules"
+podman network exists joy-pocket || podman network create joy-pocket
+podman volume exists joy-pocket-relay-data || podman volume create joy-pocket-relay-data
+common=(--network joy-pocket --security-opt label=disable --security-opt no-new-privileges --cap-drop ALL --user node --pull never)
+if ! podman container exists joy-pocket-relay; then
+  podman run -d --name joy-pocket-relay "${common[@]}" \
+    -v "$repo:/repo:ro" -v joy-pocket-relay-data:/data:U \
+    -w /repo/packages/joy-relay \
+    -e JOY_RELAY_HOST=0.0.0.0 -e JOY_RELAY_PORT=3105 \
+    -e JOY_RELAY_DATA_DIR=/data/relay -e JOY_RELAY_DOCS=off \
+    -e JOY_RELAY_TRUST_PROXY=1 "$node_image" node server.mjs
+else
+  podman start joy-pocket-relay >/dev/null
+fi
+if ! podman container exists joy-pocket-web; then
+  podman run -d --name joy-pocket-web "${common[@]}" \
+    -p "$bind:$port:8080" -v "$web:/web:ro" \
+    -v "$repo/dev/pocket-stack/gateway.mjs:/gateway.mjs:ro" \
+    -e "ALLOWED_HOSTS=agent-01,localhost,127.0.0.1,100.121.220.10,agent-01.taile7098d.ts.net" \
+    "$node_image" node /gateway.mjs
+else
+  podman start joy-pocket-web >/dev/null
+fi
+# Image construction installs OS dependencies; do that separately with approval.
+if podman image exists localhost/joy-pocket-daemon:dev; then
+  podman volume exists joy-pocket-daemon-home || podman volume create joy-pocket-daemon-home
+  if ! podman container exists joy-pocket-daemon; then
+    agent_args=()
+    if [[ -n "${JOY_TEST_CODEX_BIN:-}" ]]; then
+      agent_args=(-v "$(realpath "$JOY_TEST_CODEX_BIN"):/usr/local/bin/codex:ro")
+    fi
+    podman run -d --name joy-pocket-daemon "${common[@]}" \
+      -v "$repo:/repo:ro" -v joy-pocket-daemon-home:/home/node:U \
+      "${agent_args[@]}" \
+      -e JOY_HOME_DIR=/home/node/.joy -e JOY_RELAY_URL=http://joy-pocket-relay:3105 \
+      localhost/joy-pocket-daemon:dev
+  else
+    podman start joy-pocket-daemon >/dev/null
+  fi
+else
+  echo 'Daemon image not built yet. Web and relay are running.'
+fi
+printf 'Joy: http://agent-01:%s (Pocket on a remote browser requires HTTPS)\n' "$port"
