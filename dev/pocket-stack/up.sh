@@ -10,7 +10,7 @@ test -f "$web/pocket/worker.js"
 test -d "$repo/node_modules"
 podman network exists joy-pocket || podman network create joy-pocket
 podman volume exists joy-pocket-relay-data || podman volume create joy-pocket-relay-data
-common=(--network joy-pocket --security-opt label=disable --security-opt no-new-privileges --cap-drop ALL --user node --pull never)
+common=(--init --network joy-pocket --security-opt label=disable --security-opt no-new-privileges --cap-drop ALL --user node --pull never)
 if ! podman container exists joy-pocket-relay; then
   podman run -d --name joy-pocket-relay "${common[@]}" \
     -v "$repo:/repo:ro" -v joy-pocket-relay-data:/data:U \

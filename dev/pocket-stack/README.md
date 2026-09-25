@@ -4,6 +4,8 @@ The web container serves an Expo export and proxies `/joy/v2` to a relay with
 its own database volume. Pocket runs in the browser. The optional daemon has
 its own home volume, pairing and agent login. Only web ports are published;
 the daemon's control port and the relay stay inside the container network.
+Containers use Podman's init process to reap orphaned tmux children; without
+it, an active daemon can eventually exhaust the container's process limit.
 
 This developer setup reuses an existing checkout and its installed Linux
 `node_modules` through read-only mounts. It does not install JS dependencies.
