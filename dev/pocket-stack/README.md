@@ -32,11 +32,11 @@ browser context. The gateway can serve HTTPS directly, with a local certificate
 for `agent-01`. No Tailscale Serve or additional packages are needed:
 
 ```sh
-bash dev/pocket-stack/make-cert.sh /tmp/joy-pocket-direct-tls
+JOY_TEST_VM_IP=10.77.0.182 bash dev/pocket-stack/make-cert.sh /tmp/joy-pocket-direct-tls
 # Recreate just the stateless web container to add the TLS port and secret mount.
 podman stop joy-pocket-web
 podman rm joy-pocket-web
-JOY_TEST_TLS_DIR=/tmp/joy-pocket-direct-tls bash dev/pocket-stack/up.sh /tmp/joy-pocket-web
+JOY_TEST_VM_IP=10.77.0.182 JOY_TEST_TLS_DIR=/tmp/joy-pocket-direct-tls bash dev/pocket-stack/up.sh /tmp/joy-pocket-web
 ```
 
 Copy `/tmp/joy-pocket-direct-tls/ca.crt` to the laptop (for example with `scp`)
@@ -47,6 +47,13 @@ is not the supported setup. The server certificate lasts 90 days. Regenerate in
 a new directory and recreate the web container when it expires. Keep the CA
 signing key private; only the server's leaf key enters the container, as a
 Podman secret. `JOY_TEST_HTTPS_PORT` overrides the default 3443.
+
+When the browser runs on the VM host, use the VM's private address directly:
+https://10.77.0.182:3443 for the current agent-01 VM. `JOY_TEST_VM_IP` adds that
+address to the certificate and exact host allowlist; substitute the VM's actual
+private address if it changes. Alternatively, map `agent-01` to that private IP
+in the host's hosts file. An older mapping to `100.121.220.10` uses Tailscale
+instead of the direct host-to-VM connection.
 
 Alternatively, from the laptop run `ssh -N -L 3210:127.0.0.1:3210 agent-01` and
 visit http://localhost:3210, which browsers treat as a secure context. Browser

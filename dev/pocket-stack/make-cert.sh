@@ -23,6 +23,10 @@ keyUsage=critical,digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth
 subjectAltName=DNS:agent-01,DNS:localhost,IP:127.0.0.1,IP:100.121.220.10
 EOF
+if [[ -n "${JOY_TEST_VM_IP:-}" ]]; then
+  # OpenSSL validates the address when it reads this extension.
+  sed -i "s/^subjectAltName=.*/&,IP:$JOY_TEST_VM_IP/" "$dest/server.ext"
+fi
 openssl x509 -req -in "$dest/server.csr" -CA "$dest/ca.crt" \
   -CAkey "$dest/ca.key" -CAcreateserial -out "$dest/server.crt" \
   -days 90 -sha256 -extfile "$dest/server.ext"

@@ -38,7 +38,7 @@ if ! podman container exists joy-pocket-web; then
     "${tls_args[@]}" \
     -p "$bind:$port:8080" -v "$web:/web:ro" \
     -v "$repo/dev/pocket-stack/gateway.mjs:/gateway.mjs:ro" \
-    -e "ALLOWED_HOSTS=agent-01,localhost,127.0.0.1,100.121.220.10,agent-01.taile7098d.ts.net" \
+    -e "ALLOWED_HOSTS=agent-01,localhost,127.0.0.1,100.121.220.10,agent-01.taile7098d.ts.net${JOY_TEST_VM_IP:+,$JOY_TEST_VM_IP}" \
     "$node_image" node /gateway.mjs
 else
   podman start joy-pocket-web >/dev/null
@@ -65,4 +65,7 @@ fi
 printf 'Joy: http://agent-01:%s (Pocket on a remote browser requires HTTPS)\n' "$port"
 if [[ -n "${JOY_TEST_TLS_DIR:-}" ]]; then
   printf 'Direct HTTPS: https://agent-01:%s (trust the local CA in your browser first)\n' "${JOY_TEST_HTTPS_PORT:-3443}"
+  if [[ -n "${JOY_TEST_VM_IP:-}" ]]; then
+    printf 'From the VM host: https://%s:%s\n' "$JOY_TEST_VM_IP" "${JOY_TEST_HTTPS_PORT:-3443}"
+  fi
 fi
