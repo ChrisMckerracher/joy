@@ -1,22 +1,37 @@
 import { beforeEach, expect, test, vi } from 'vitest';
-const m = vi.hoisted(() => ({ remove: vi.fn(), play: vi.fn(), write: vi.fn(), deleted: vi.fn(), mode: vi.fn(), listener: null as null | ((status: { didJustFinish: boolean }) => void) }));
-vi.mock('expo-audio', () => ({
-    setAudioModeAsync: m.mode,
-    createAudioPlayer: () => ({ remove: m.remove, play: m.play, addListener: (_event: string, fn: typeof m.listener) => { m.listener = fn; return { remove: vi.fn() }; } }),
+const m = vi.hoisted(() => ({
+    prepare: vi.fn(async () => {}), play: vi.fn(), stop: vi.fn(), dispose: vi.fn(async () => {}),
+    write: vi.fn(), deleted: vi.fn(), finish: null as null | (() => void),
 }));
+vi.mock('../../modules/joy-voice-audio', () => ({ getVoiceAudio: () => ({ preparePlayback: m.prepare, play: m.play, stopPlayback: m.stop, disposePlayback: m.dispose }) }));
 vi.mock('expo-crypto', () => ({ randomUUID: () => 'test' }));
 vi.mock('expo-file-system', () => ({ Paths: { cache: '/tmp' }, File: class { exists = true; uri = 'cache.wav'; write = m.write; delete = m.deleted; } }));
 import { createSpeechOutput } from './speechOutput';
-beforeEach(() => vi.clearAllMocks());
-test('native playback deletes its temporary audio on completion', async () => {
-    const output = createSpeechOutput(); await output.prepare();
-    expect(m.mode).toHaveBeenCalledWith(expect.objectContaining({ allowsRecording: false }));
-    const playing = output.play(new Uint8Array([1]), new AbortController().signal);
-    expect(m.play).toHaveBeenCalledOnce(); m.listener!({ didJustFinish: true }); await playing;
-    expect(m.remove).toHaveBeenCalledOnce(); expect(m.deleted).toHaveBeenCalledOnce();
+beforeEach(() => {
+    vi.clearAllMocks();
+    m.prepare.mockResolvedValue();
+    m.play.mockImplementation(() => new Promise<void>(resolve => { m.finish = resolve; }));
+    m.stop.mockImplementation(async () => { m.finish?.(); });
 });
-test('native cancellation releases player and file without waiting for completion', async () => {
+test('native playback uses voice audio and deletes its temporary file on completion', async () => {
+    const output = createSpeechOutput(); await output.prepare();
+    const playing = output.play(new Uint8Array([1]), new AbortController().signal);
+    await vi.waitFor(() => expect(m.play).toHaveBeenCalledWith('cache.wav'));
+    m.finish!(); await playing;
+    expect(m.deleted).toHaveBeenCalledOnce();
+});
+test('native cancellation stops playback and releases the audio file', async () => {
     const output = createSpeechOutput(); const controller = new AbortController();
-    const playing = output.play(new Uint8Array([1]), controller.signal); controller.abort(); output.dispose(); await playing;
-    expect(m.remove).toHaveBeenCalledOnce(); expect(m.deleted).toHaveBeenCalledOnce();
+    const playing = output.play(new Uint8Array([1]), controller.signal);
+    await vi.waitFor(() => expect(m.play).toHaveBeenCalledOnce());
+    controller.abort(); await output.dispose(); await playing;
+    expect(m.stop).toHaveBeenCalledOnce(); expect(m.dispose).toHaveBeenCalledOnce(); expect(m.deleted).toHaveBeenCalledOnce();
+});
+test('cancellation during native audio preparation never starts playback', async () => {
+    let ready!: () => void;
+    m.prepare.mockReturnValueOnce(new Promise<void>(resolve => { ready = resolve; }));
+    const output = createSpeechOutput(); const controller = new AbortController();
+    const playing = output.play(new Uint8Array([1]), controller.signal);
+    controller.abort(); ready(); await playing;
+    expect(m.play).not.toHaveBeenCalled(); expect(m.deleted).toHaveBeenCalledOnce();
 });

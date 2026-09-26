@@ -47,8 +47,14 @@ export const SettingsSchema = z.object({
     joy__doubleTapEnabled: z.boolean().describe('Mod 06: require double tap to commit AskUserQuestion option/submit selections'),
     joy__tmuxServerUrl: z.string().nullable().describe('URL of the joy-tmux server for session management'),
     joy__newSessionDefault: z.boolean().describe('Joy: New session buttons open the joy-tmux create page instead of /new'),
-    // Legacy conversational-agent settings below are retained for sync round trips.
-    // Pocket TTS never reads their IDs, credentials or microphone preferences.
+    // Provider preferences and user-supplied keys use the existing encrypted settings sync.
+    voiceApiStyle: z.enum(['openai', 'anthropic']).describe('Conversational API format'),
+    voiceApiBaseUrl: z.string().describe('Conversational API base URL, including its version path'),
+    voiceApiModel: z.string().describe('Conversational model identifier'),
+    voiceApiKey: z.string().describe('Conversational API key'),
+    voiceSttBaseUrl: z.string().describe('OpenAI-compatible transcription API base URL'),
+    voiceSttModel: z.string().describe('Transcription model identifier'),
+    voiceSttApiKey: z.string().describe('Transcription API key'),
     pocketTtsVoice: z.enum(['alba', 'marius', 'javert', 'jean', 'fantine', 'cosette', 'eponine', 'azelma']).describe('Built-in Pocket TTS voice'),
     // Session list (behind localSettings.sessionListV2). Synced, because a pin
     // and a custom group are statements about the WORK, true on every device —
@@ -62,7 +68,7 @@ export const SettingsSchema = z.object({
     })).describe('Voice agents the user added: a public agent id alone, or a private one with its API key'),
     voiceActiveAgentId: z.string().nullable().describe('Which voice agent to use (id from voiceAgents)'),
     harnessModels: z.record(z.string(), z.array(z.string())).describe('Per harness, the model keys its pickers offer (Settings → Models); a harness absent here shows the catalog\'s recommended subset'),
-    voiceMode: z.enum(['classic', 'standby']).describe('classic: one conversation from the mic tap until ended, nothing sent that the agent must allow (no overrides). standby: idle hang-up plus event and sound wake; needs prompt and first-message overrides enabled on the agent'),
+    voiceMode: z.enum(['classic', 'standby']).describe('classic: listen until ended. standby: allow pausing with event and sound wake'),
     voiceWakeOnEvents: z.boolean().describe('While voice is armed, session events (turn ended, approval, question) reconnect and speak'),
     voiceWakeOnSound: z.boolean().describe('While voice is idle and the app is in the foreground, listen locally and reconnect when speech-like sound is heard'),
     voiceIdleTimeoutSec: z.number().describe('Seconds of silence before an open voice conversation hangs up (stays armed); 0 = never'),
@@ -132,6 +138,13 @@ export const settingsDefaults: Settings = {
     joy__tmuxServerUrl: null,
     joy__newSessionDefault: false,
     pinnedSessions: [],
+    voiceApiStyle: 'openai',
+    voiceApiBaseUrl: 'https://api.openai.com/v1',
+    voiceApiModel: '',
+    voiceApiKey: '',
+    voiceSttBaseUrl: 'https://api.openai.com/v1',
+    voiceSttModel: 'whisper-1',
+    voiceSttApiKey: '',
     pocketTtsVoice: 'alba',
     voiceAgents: [],
     voiceActiveAgentId: null,
@@ -139,7 +152,7 @@ export const settingsDefaults: Settings = {
     voiceMode: 'classic',
     voiceWakeOnEvents: true,
     voiceWakeOnSound: true,
-    voiceIdleTimeoutSec: 45,
+    voiceIdleTimeoutSec: 0,
     agentDefaultOverrides: {},
     dismissedCLIWarnings: { perMachine: {}, global: {} },
 };

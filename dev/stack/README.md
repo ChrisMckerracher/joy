@@ -1,4 +1,7 @@
-# Isolated Pocket test stack (Podman)
+# Isolated Joy development stack (Podman)
+
+The `joy-pocket-*` container and volume identifiers are retained so existing
+accounts, pairing and test data remain usable. They run the ordinary Joy stack.
 
 The web container serves an Expo export and proxies `/joy/v2` to a relay with
 its own database volume. Pocket runs in the browser. The optional daemon has
@@ -21,8 +24,8 @@ With permission to install tmux, Git and their runtime dependencies inside an
 image, build the daemon (the cached Node image must already be available):
 
 ```sh
-podman build --pull=never -t localhost/joy-pocket-daemon:dev -f dev/pocket-stack/Daemon.Containerfile dev/pocket-stack
-bash dev/pocket-stack/up.sh /tmp/joy-pocket-web
+podman build --pull=never -t localhost/joy-pocket-daemon:dev -f dev/stack/Daemon.Containerfile dev/stack
+bash dev/stack/up.sh /tmp/joy-pocket-web
 ```
 
 Without that image, `up.sh` starts just web and relay. To reuse an already
@@ -34,11 +37,11 @@ browser context. The gateway can serve HTTPS directly, with a local certificate
 for `agent-01`. No Tailscale Serve or additional packages are needed:
 
 ```sh
-JOY_TEST_VM_IP=10.77.0.182 bash dev/pocket-stack/make-cert.sh /tmp/joy-pocket-direct-tls
+JOY_TEST_VM_IP=10.77.0.182 bash dev/stack/make-cert.sh /tmp/joy-pocket-direct-tls
 # Recreate just the stateless web container to add the TLS port and secret mount.
 podman stop joy-pocket-web
 podman rm joy-pocket-web
-JOY_TEST_VM_IP=10.77.0.182 JOY_TEST_TLS_DIR=/tmp/joy-pocket-direct-tls bash dev/pocket-stack/up.sh /tmp/joy-pocket-web
+JOY_TEST_VM_IP=10.77.0.182 JOY_TEST_TLS_DIR=/tmp/joy-pocket-direct-tls bash dev/stack/up.sh /tmp/joy-pocket-web
 ```
 
 Copy `/tmp/joy-pocket-direct-tls/ca.crt` to the laptop (for example with `scp`)
@@ -54,8 +57,8 @@ When the browser runs on the VM host, use the VM's private address directly:
 https://10.77.0.182:3443 for the current agent-01 VM. `JOY_TEST_VM_IP` adds that
 address to the certificate and exact host allowlist; substitute the VM's actual
 private address if it changes. Alternatively, map `agent-01` to that private IP
-in the host's hosts file. An older mapping to `100.121.220.10` uses Tailscale
-instead of the direct host-to-VM connection.
+in the host's hosts file. The laptop maps `agent-01` to `100.121.220.10` through Tailscale.
+Keep Tailscale connected when accessing the VM from the laptop.
 
 Alternatively, from the laptop run `ssh -N -L 3210:127.0.0.1:3210 agent-01` and
 visit http://localhost:3210, which browsers treat as a secure context. Browser
@@ -66,7 +69,7 @@ machine picker until paired. Run this on the VM, then open the printed link
 in the same browser origin where you are logged in and accept the connection:
 
 ```sh
-podman exec joy-pocket-daemon node --import tsx /repo/dev/pocket-stack/pair-daemon.mjs https://10.77.0.182:3443 && podman restart joy-pocket-daemon
+podman exec joy-pocket-daemon node --import tsx /repo/dev/stack/pair-daemon.mjs https://10.77.0.182:3443 && podman restart joy-pocket-daemon
 ```
 
 The helper uses Joy's existing terminal approval protocol and proof of key
@@ -91,12 +94,14 @@ Codex executable must be mounted as described above and `codex login status`
 inside the container must report a login before testing replies. Choosing an
 uninstalled agent can leave messages queued while its startup fails.
 
-Enable spoken updates in a session. The first activation
+Configure Voice and tap the microphone in a session. The first activation
 downloads about 132 MB of models into the browser; subsequent use is cached.
 The gateway enables cross-origin isolation for up to four WASM CPU threads.
 Playback waits for each complete clip to avoid mid-word gaps when inference is slower than real time.
-This does not provide microphone transcription or spoken commands. Native
-mobile testing still requires an installed development build on a device.
+Configure the conversation and transcription endpoints in Settings → Voice, then
+test spoken instructions, summaries, questions and approvals. Native testing
+still requires an installed development build on a device. Speakerphone echo
+and real-device interruption behavior remain validation requirements.
 
 Inspect or stop the stack without deleting test data:
 

@@ -88,7 +88,8 @@ export default {
         // new number exists (2026-09-10: an OTA went out at 22, every device
         // was on 21, nobody saw it). Only for JS that runs on that runtime;
         // the default is the fence.
-        runtimeVersion: process.env.JOY_RUNTIME_VERSION || "22",
+        // 23 = local ONNX speech runtime, voice audio, and removal of ElevenLabs modules.
+        runtimeVersion: process.env.JOY_RUNTIME_VERSION || "23",
         orientation: "default",
         icon: "./sources/assets/images/icon.png",
         scheme: "joy",

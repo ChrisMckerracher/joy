@@ -1255,8 +1255,9 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
         </>
     ) : null;
 
-    // The speaker enables Pocket TTS updates for this session. While enabled,
-    // the status bar owns the controls and the slot goes back to send.
+    // Voice: the mic in the send slot arms voice for this session and opens
+    // the conversation. While live or standing by the status bar owns the
+    // controls and the slot goes back to send.
     const voiceStatus = useRealtimeStatus();
     const voiceArmed = useVoiceArmedSessionId() !== null;
     const handleMicrophonePress = React.useCallback(() => {

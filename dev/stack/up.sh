@@ -37,7 +37,7 @@ if ! podman container exists joy-pocket-web; then
   podman run -d --name joy-pocket-web "${common[@]}" \
     "${tls_args[@]}" \
     -p "$bind:$port:8080" -v "$web:/web:ro" \
-    -v "$repo/dev/pocket-stack/gateway.mjs:/gateway.mjs:ro" \
+    -v "$repo/dev/stack/gateway.mjs:/gateway.mjs:ro" \
     -e "ALLOWED_HOSTS=agent-01,localhost,127.0.0.1,100.121.220.10,agent-01.taile7098d.ts.net${JOY_TEST_VM_IP:+,$JOY_TEST_VM_IP}" \
     "$node_image" node /gateway.mjs
 else
@@ -62,7 +62,7 @@ if podman image exists localhost/joy-pocket-daemon:dev; then
 else
   echo 'Daemon image not built yet. Web and relay are running.'
 fi
-printf 'Joy: http://agent-01:%s (Pocket on a remote browser requires HTTPS)\n' "$port"
+printf 'Joy: http://agent-01:%s (Voice on a remote browser requires HTTPS)\n' "$port"
 if [[ -n "${JOY_TEST_TLS_DIR:-}" ]]; then
   printf 'Direct HTTPS: https://agent-01:%s (trust the local CA in your browser first)\n' "${JOY_TEST_HTTPS_PORT:-3443}"
   if [[ -n "${JOY_TEST_VM_IP:-}" ]]; then

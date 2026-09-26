@@ -1,5 +1,5 @@
 // Pair a fresh test daemon through Joy's existing browser approval screen.
-// Run from the daemon package with `node --import tsx /repo/dev/pocket-stack/pair-daemon.mjs WEB_ORIGIN`.
+// Run from the daemon package with `node --import tsx /repo/dev/stack/pair-daemon.mjs WEB_ORIGIN`.
 import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -20,7 +20,7 @@ if (['access.key', 'settings.json', 'perimeter.key', 'account.secret'].some(name
 }
 const kp = nacl.box.keyPair();
 const publicKey = Buffer.from(kp.publicKey).toString('base64');
-const headers = { 'content-type': 'application/json', 'x-joy-client': 'dev/pocket-stack-pair' };
+const headers = { 'content-type': 'application/json', 'x-joy-client': 'dev/stack-pair' };
 const gate = process.env.JOY_RELAY_ACCESS_KEY;
 if (gate) headers['x-joy-relay-key'] = gate;
 async function request(proof) {

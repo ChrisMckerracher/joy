@@ -1,57 +1,78 @@
-# Voice with Pocket TTS
+# Voice
 
-Tap the **speaker** in a session composer to enable spoken updates for that session. Joy reads completed assistant replies, choice questions and pending approval alerts. Stop with the voice bar or its ×. Changing sessions or leaving the app stops speech and discards queued updates.
+Voice lets you talk to your coding sessions: ask what they are doing, send instructions, hear concise updates, and answer questions and permission requests. Joy supplies session context and executes the same message and permission operations used by the app.
 
-This draft implements speech output. It removes the ElevenLabs conversation service; it does not yet replace microphone input, speech recognition or spoken commands. **Reply and approve in the app.** Pocket TTS itself only synthesizes speech. Full conversational voice requires separate work and must not be considered replaced by this draft.
+This replacement is still **draft**. Its conversation and transcription integrations are implemented, but live-provider accuracy, device compatibility, speakerphone echo, listening quality and latency must be validated before it is ready to replace the previous voice service.
 
-## Runs inside the client
+## Configure Voice
 
-The iOS/Android app uses a bundled native ONNX Runtime. The web client uses a bundled WebAssembly runtime in a dedicated worker. It uses up to four CPU threads when the host enables cross-origin isolation; otherwise it falls back to one thread. Both execute the same Pocket TTS inference locally. No Python installation, Docker container, Pocket server, daemon speech endpoint or API key is needed.
+In **Settings → Voice**, configure:
 
-First activation downloads approximately **132–134 MB** of pinned English model and voice data from Hugging Face. A progress indicator appears while loading; × cancels. Native model files are saved in app storage, and browsers use Cache Storage when available. Downloads are checked against pinned sizes and SHA-256 hashes before use. Interrupted downloads are never treated as complete. The browser revalidates cached files; native storage commits only verified downloads.
+- **Conversation API format:** OpenAI-compatible Chat Completions or Anthropic-compatible Messages.
+- **Conversation base URL:** include the API version path, for example `https://api.openai.com/v1` or `https://api.anthropic.com/v1`. Joy appends `/chat/completions` or `/messages`. A compatible gateway or self-hosted endpoint can be used instead.
+- **Conversation model and API key:** use a model available at that endpoint with tool calling. The model identifier is editable; Joy does not assume that your account has access to a particular model. Keys can be empty for endpoints that require no authentication. Changing the endpoint or API format clears its key.
+- **Transcription base URL, model and API key:** a separate OpenAI-compatible `/audio/transcriptions` service. `whisper-1` is the initial editable model value. Anthropic-style conversation routing does not supply transcription. Enter transcription credentials separately even if you use the same provider for both.
+- **Voice:** choose Alba, Marius, Javert, Fantine, Éponine or Azelma for local speech. Legacy Jean/Cosette selections fall back to Alba because those source voices carry noncommercial licenses.
 
-Later activations reuse cached model files. Native synthesis then works without a network connection. The web client still needs its app/worker files to be available from the app host or the browser HTTP cache; model caching does not make the whole web app offline. Joy’s session synchronization still needs its normal connections. Browsers can evict cached data or deny persistent caching; in that case a subsequent activation downloads it again. Web speech requires HTTPS or localhost for model verification. Plain HTTP on a remote hostname, including `http://agent-01`, does not provide the required browser crypto API.
+Provider requests originate from the client. Browser endpoints must support CORS for the app's origin, POST, and the relevant headers (`Authorization`, or `x-api-key`, `anthropic-version`, and `anthropic-dangerous-direct-browser-access`). A custom endpoint that works with curl may still need CORS configuration. An HTTPS page cannot generally call a plain HTTP endpoint. Native networking also follows the platform's transport policies. Browser `localhost` refers to the computer running the browser.
 
-**Settings → Voice** offers Alba, Marius, Javert, Fantine, Éponine and Azelma. Changing the voice ends active speech. Old Jean/Cosette selections fall back to Alba because those source voices carry noncommercial licenses. Only the chosen voice file is downloaded, from Kyutai’s individual English April 2026 voice states. English synthesis only; there is no voice cloning UI.
+The transcription service must accept the device's recording format: WebM or MP4 on web, M4A on Android, and WAV on iOS. Matching the `/audio/transcriptions` request shape alone does not establish audio-format compatibility. For example, [z.ai transcription](https://docs.z.ai/api-reference/audio/audio-transcriptions) documents WAV/MP3 input; it is not a drop-in choice for Joy's current web and Android capture.
 
-Text remains on the device during speech synthesis. Only static model downloads contact Hugging Face; session text and generated speech are never sent to a speech server. Native playback uses a temporary WAV file that is removed after playback or cancellation. Legacy encrypted ElevenLabs settings remain inert for compatibility with other clients.
+OpenAI-style conversation requests use `max_completion_tokens`; compatible endpoints must support that field and function tools. Anthropic-style requests use `max_tokens` and content-block tool results. Requests have a 45-second overall deadline and retry transport failures, HTTP 408/429 and server failures at most twice. Authentication and validation errors require corrected settings. Requests and action responses are not logged with credentials.
 
-## Behavior and limits
+## Talk to your sessions
 
-- Only the selected session speaks. Reasoning and incremental text are not read. Completed replies are shortened to about 400 characters; this is an excerpt, not an AI summary. Code blocks, internal markup and file/image payloads are omitted.
-- Pending approvals announce the tool name without its arguments. Approvals answered before playback are discarded. Choice questions include their options; answer in the app.
-- Speech is serialized, bounded to eight queued clips and expires after 30 seconds if playback has not started. Stop cancels model loading, retires generation and prevents late audio from playing. Native inference already in progress is allowed to finish its current operation before releasing the engine.
-- Models are unloaded when speech stops or the app backgrounds. The next activation reloads cached files; it does not keep hundreds of megabytes resident while speech is disabled.
-- Generation is limited to 500 characters and 500 audio frames (about 40 seconds). Both clients finish generating each short clip before starting playback. An earlier web streaming experiment was disabled after it inserted 64–171 ms gaps inside speech when inference fell behind the audio clock. Multi-threaded generation remains enabled; latency and memory use still need real-device validation.
+Tap the microphone in a session. The first activation downloads approximately **132–134 MB** of pinned model and selected voice data. Microphone permission is required. Joy then listens for spoken phrases, transcribes them, and asks the configured conversational model how to respond. Pocket TTS generates the spoken reply on the device.
 
-## Building and testing the draft
+The conversation keeps track of the session you are viewing and receives updates from other sessions too. It summarizes results naturally, reads question options, and can send your selected answer or approve/deny a pending request when instructed. Session context is supplied as background data; it is not spoken verbatim. Approval execution rechecks that the request is still pending. Recent voice history is retained through pause/resume and cleared when voice ends.
 
-The app declares `onnxruntime-web@1.24.3` and `onnxruntime-react-native@1.24.3`. The Expo config plugin also pins the Android AAR and iOS C pod to 1.24.3 instead of the vendor’s floating native versions. Use the repository's pinned package manager to install dependencies. The app postinstall runs `pocket:prepare`, which copies the installed web runtime and Joy's worker to `public/pocket` without downloading any executable code. Run `pnpm --filter joy-app pocket:prepare` after editing the shared engine or worker.
+**Stays on** listens until ended. **Standby** also allows pausing, waking on session events or speech, and an optional idle timeout. There is no default billing-driven hang-up. The status bar controls pause/retry/end according to the selected mode; × always ends voice. You can cancel startup from the status bar. The microphone and audio stop when the app backgrounds; returning to the foreground resumes a previously active conversation. Changing voice configuration ends the active conversation.
 
-For multi-threaded web synthesis, serve the app and worker with these response headers (the Podman test gateway already does):
+Capture uses a local audio-level detector with sustained-sound and trailing-silence thresholds. It is not a wake-word or speaker-recognition model. Background speech can trigger it. Web capture requests browser echo cancellation. Android pairs a voice-communication recording source with communication-mode playback. A local Expo module gives iOS voice-processing capture and playback through one audio engine. **Native compilation, speakerphone echo and interruption behavior remain release gates on real devices.** Do not assume a unit test or headset test establishes speakerphone compatibility.
+
+Speech is generated in complete short clips before playback to avoid mid-word gaps when synthesis is slower than real time. Longer spoken replies are split at word boundaries instead of being shortened to excerpts. A new utterance cancels an obsolete model response or speech output. An action already sent to a coding session cannot be undone by interrupting its spoken acknowledgment. Conversation requests and tool rounds are bounded; context and complete tool/result turns are retained within memory limits.
+
+## Privacy and storage
+
+Microphone recordings go to the configured transcription endpoint. Transcripts, recent conversational history, coding-session context and tool results go to the configured conversation endpoint. Provider retention and usage depend on that endpoint. Static model downloads contact Hugging Face; **speech synthesis itself** sends no text or generated audio to a speech service.
+
+API keys and preferences use Joy's existing encrypted account-settings sync. Local settings use the app's existing persistence mechanism; this is not a new guarantee of device keychain storage. Keys are entered with a masked field, can be cleared, and are never displayed in full by Voice settings. Temporary recordings and generated audio are removed after use or cancellation.
+
+Downloaded speech assets are verified against pinned sizes and SHA-256 hashes before caching. Interrupted downloads are not committed. Native model files use app storage; web uses Cache Storage when available. Browsers may evict cached data. Stopping or pausing speech releases the model; later synthesis reloads cached assets. Local synthesis does not make transcription, conversation APIs, or Joy's session sync offline.
+
+## Build and validate
+
+The app bundles `onnxruntime-web@1.24.3` and `onnxruntime-react-native@1.24.3`, including pinned Android AAR and iOS pod versions. App postinstall runs `pocket:prepare` to copy installed web runtime files and the worker to `public/pocket`. Run it again after changing the engine or worker:
+
+```sh
+cd packages/joy-app
+node scripts/prepare-pocket.cjs
+```
+
+Native runtime version **23** includes the ONNX runtime and local voice-audio module, and removes the ElevenLabs native stack. Install a newly compiled native app; an OTA update or Expo Go cannot add native modules. Web exports must include the generated `/pocket` assets. No standalone Pocket server is required.
+
+For up to four WASM CPU threads, serve the app with:
 
 ```text
 Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
 ```
 
-Use HTTPS or localhost and check `crossOriginIsolated` in the browser. Cross-origin assets must support CORS or an appropriate resource policy; the pinned model downloads use CORS. Other hosts retain single-thread synthesis if isolation is unavailable.
+The worker falls back to one thread without cross-origin isolation. HTTPS or localhost is required for browser microphone access and model verification. Plain remote HTTP, including `http://agent-01`, is insufficient for voice. See the [Joy development stack](../../dev/stack/README.md) for direct HTTPS on the VM while keeping daemon and relay ports private.
 
-Native builds need native dependency linking and a rebuilt app; an OTA update or Expo Go alone cannot add ONNX Runtime. Web export must include the generated `/pocket` directory. Do not deploy an export that omitted this preparation step.
-
-The PR stays **draft** until synthesis and playback are validated in Joy on web, Android and iOS. Automated WASM and Chrome worker smoke tests have passed; native device playback and listening quality still need review. Required checks: first download/progress, repeat use without model network access, cancellation during load/generation/playback, backgrounding, switching sessions, memory release, voice changes, and intelligible output with measured latency. Mock lifecycle tests do not establish device compatibility or speech quality.
-
-See [third-party notices](../../packages/joy-app/sources/realtime/pocket/NOTICE.md) for model, voice and runtime licenses.
-
-With the pinned model files and Alba’s safetensors file downloaded to a local directory (filenames and hashes are in `assets.json`), the reproducible smoke tests are:
+Using installed dependencies and pinned speech assets (filenames and hashes in `sources/realtime/pocket/assets.json`):
 
 ```sh
 cd packages/joy-app
-node scripts/prepare-pocket.cjs
-node scripts/test-pocket.mjs /path/to/models /tmp/pocket.wav
+../../node_modules/.bin/vitest run sources/realtime sources/sync/settings.spec.ts
+../../node_modules/.bin/tsc --noEmit
+node scripts/test-pocket.mjs /path/to/models /tmp/voice.wav
 node scripts/test-pocket-browser.cjs /path/to/models
+node scripts/test-voice-browser.cjs /path/to/models
 ```
 
-The browser test uses an installed Chrome (`CHROME_BIN` can override the executable) and a temporary profile. It serves only the test assets on loopback, plays one complete generated clip, records playback-start and total generation times, blocks model downloads, and verifies that a new worker can synthesize from its cache. It does not prove native-device behavior or subjective speech quality.
+The tests cover provider wire contracts, retries, context and tool results, stale requests, startup/stop/background races, recording cleanup and playback cancellation. The browser conversation fixture uses a fake microphone and simulated API responses; it does not establish real transcription accuracy or LLM behavior. Pocket smoke tests use real inference, but do not establish subjective speech quality.
 
-Set `POCKET_ISOLATED=0` to test the single-thread fallback, or `POCKET_BENCHMARK_SEED=1` for repeatable sampling noise. On the test VM, the same 3.12-second phrase took 4.84 seconds to synthesize with one thread and 3.73 seconds with four; experimental streaming started playback after 1.37 seconds but was not smooth. A longer 7.36-second clip reproduced six playback gaps, so session playback now waits for a complete clip. These are warm-runtime generation timings, excluding model loading, and do not predict performance on the user's device.
+Before merge, exercise the actual Joy UI on web, Android and iOS with configured providers: first-use setup, repeat use, spoken instructions and questions, approvals including already-answered requests, multiple sessions, interruptions, pause/wake, cancellation, app backgrounding, voice changes and provider errors. Measure full utterance-to-response latency, memory and battery use. Native compilation, device playback and speakerphone echo need explicit evidence; JavaScript export alone is insufficient.
+
+See [third-party notices](../../packages/joy-app/sources/realtime/pocket/NOTICE.md) for model, voice and runtime licenses.
