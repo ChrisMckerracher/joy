@@ -76,6 +76,11 @@ const DELIVERY_WAIT_MS = 30 * 60_000;
 /** Once stalled, how often the turn is re-checked for output so a recovery
  *  clears the flag promptly. */
 const STALL_RECHECK_MS = 60_000;
+/** An unreachable relay is retried with backoff from ACQUIRE_RETRY_MIN_MS up
+ *  to ACQUIRE_RETRY_MS: a relay that restarts is picked up again within
+ *  seconds (the offline work a direct tunnel did drains to it promptly),
+ *  while one that stays down is asked at most once a minute. */
+const ACQUIRE_RETRY_MIN_MS = 1_000;
 const ACQUIRE_RETRY_MS = 60_000;
 
 export interface NucleusLaneOpts {
@@ -2815,6 +2820,7 @@ export function startNucleusLane(opts: NucleusLaneOpts): NucleusLaneHandle {
 
   async function laneLoop(lane: "work" | "control"): Promise<void> {
     let announced = false;
+    let idleRetryMs = ACQUIRE_RETRY_MIN_MS;
     while (!stopped) {
       try {
         if (!lease()) {
@@ -2833,6 +2839,7 @@ export function startNucleusLane(opts: NucleusLaneOpts): NucleusLaneHandle {
         }
         const leaseRef = lease()!;
         const offers = await claim(lane, leaseRef);
+        idleRetryMs = ACQUIRE_RETRY_MIN_MS;
         let anyNew = offers.length === 0; // empty = the long-poll waited; no spin
         for (const offer of offers) {
           if (stopped) break;
@@ -2884,10 +2891,15 @@ export function startNucleusLane(opts: NucleusLaneOpts): NucleusLaneHandle {
         if (lease()) sender.start(); // boot failed mid-way: the outbox still holds the rows
         if (!announced) {
           const cause = (e as { cause?: { code?: string; message?: string } }).cause;
-          log(`${lane} lane idle (${String((e as Error).message ?? e)}${cause ? `: ${cause.code ?? cause.message ?? ""}` : ""}) — retrying every ${ACQUIRE_RETRY_MS / 1000}s`);
+          log(`${lane} lane idle (${String((e as Error).message ?? e)}${cause ? `: ${cause.code ?? cause.message ?? ""}` : ""}) — retrying with backoff up to ${ACQUIRE_RETRY_MS / 1000}s`);
           announced = true;
         }
-        await sleep(lane === "work" ? ACQUIRE_RETRY_MS : 5_000);
+        if (lane === "work") {
+          await sleep(idleRetryMs);
+          idleRetryMs = Math.min(idleRetryMs * 2, ACQUIRE_RETRY_MS);
+        } else {
+          await sleep(5_000);
+        }
       }
     }
   }
