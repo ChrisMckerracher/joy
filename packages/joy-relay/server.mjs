@@ -14,6 +14,7 @@ import { createAccounts } from './src/accounts.mjs';
 import { createAutomations } from './src/automations.mjs';
 import { createGate } from './src/gate.mjs';
 import { createTunnel } from './src/tunnel.mjs';
+import { startStunServer } from './src/stun.mjs';
 import { createV2Router } from './src/v2.mjs';
 import { createAttachments } from './src/attachments.mjs';
 import { handleDocs, docsConfig } from './src/docs.mjs';
@@ -62,7 +63,15 @@ const auth = createAuth({ tokens, accounts });
 const tunnel = createTunnel({ notify });
 const attachments = createAttachments(db);
 const VERSION = '0.2.0';
-const v2 = createV2Router({ core, auth, notify, db, tunnel, attachments, accounts, automations, dataDir: DATA_DIR, version: VERSION });
+// STUN (UDP) for direct app↔daemon tunnels: peers learn their public
+// address here, then punch to each other with the relay out of the path.
+// Off unless JOY_RELAY_STUN_PORT is set; it must be reachable directly (a TLS
+// proxy in front of the HTTP port does not carry it).
+const STUN_PORT = process.env.JOY_RELAY_STUN_PORT ? Number(process.env.JOY_RELAY_STUN_PORT) : null;
+const STUN_HOST = process.env.JOY_RELAY_STUN_HOST?.trim() || '0.0.0.0';
+const stun = STUN_PORT === null ? null : await startStunServer({ host: STUN_HOST, port: STUN_PORT, log: (l) => console.error(l) });
+if (stun) console.log(`[joy-relay] stun listening udp ${STUN_HOST}:${stun.port}`);
+const v2 = createV2Router({ core, auth, notify, db, tunnel, attachments, accounts, automations, dataDir: DATA_DIR, version: VERSION, stun: stun ? { port: stun.port } : null });
 
 // Lease-expiry sweep: orphans running turns whose daemon lease lapsed.
 setInterval(() => { core.sweepExpiredLeases().catch((e) => console.error('[joy-relay] sweep failed:', e)); }, 5_000).unref();
@@ -138,6 +147,7 @@ function stop(signal) {
   deadline.unref();
   server.close();
   server.closeAllConnections?.();
+  void stun?.close();
   db.close()
     .then(() => { console.log('[joy-relay] stopped'); process.exit(0); })
     .catch((e) => { console.error('[joy-relay] database close failed:', e); process.exit(1); });

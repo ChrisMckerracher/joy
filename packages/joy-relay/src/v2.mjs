@@ -93,7 +93,7 @@ const MSG_SELECT = `
   FROM commands c JOIN turns tu ON tu.id = c.turn_id
   WHERE c.session_id = $1 AND c.kind = 'prompt'`;
 
-export function createV2Router({ core, auth, notify, db, tunnel, attachments, accounts, automations, dataDir = null, version = null }) {
+export function createV2Router({ core, auth, notify, db, tunnel, attachments, accounts, automations, dataDir = null, version = null, stun = null }) {
   const startedAt = Date.now();
   const routes = [];
   const route = (method, pattern, opts, handler) =>
@@ -103,7 +103,10 @@ export function createV2Router({ core, auth, notify, db, tunnel, attachments, ac
   route('GET', '/capabilities', { auth: false, summary: 'Relay flavor + protocol version (no auth); clients probe this before trusting a server URL' }, async () => ({
     relay: 'joy-relay',
     protocol: { major: 2, minor: 0 },
-    features: ['accounts', 'pairing', 'machines', 'push', 'sessions', 'messages', 'turns', 'cancellations', 'attachments', 'events', 'sse', 'tunnel', 'automations'],
+    features: ['accounts', 'pairing', 'machines', 'push', 'sessions', 'messages', 'turns', 'cancellations', 'attachments', 'events', 'sse', 'tunnel', 'automations', ...(stun ? ['stun'] : [])],
+    // Where peers ask for their public address before punching a direct
+    // tunnel: same host as this relay, UDP on this port.
+    ...(stun ? { stun: { port: stun.port } } : {}),
   }));
 
   async function ownedSession(t, sessionId, accountId) {
