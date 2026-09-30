@@ -41,6 +41,12 @@ export const GLOBAL_INBOX_MAX_BYTES = 256 * 1024 * 1024;
 // drain, and how long it waits before the client is dropped as too slow.
 export const RESPONSE_MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 export const RESPONSE_DRAIN_WAIT_MS = 10_000;
+// ...or longer for a big backlog: a client draining at least this fast is
+// alive, not stalled. A phone on a lossy cellular link empties an 8 MiB
+// backlog in tens of seconds, and a flat 10 s dropped it on every large
+// file. 32 KiB/s (256 kbit/s) is about EDGE; memory stays capped by
+// RESPONSE_MAX_BUFFERED_BYTES either way, only the wait grows.
+export const RESPONSE_MIN_DRAIN_BYTES_PER_S = 32 * 1024;
 
 export function createTunnel({
   notify,
@@ -52,6 +58,7 @@ export function createTunnel({
   globalMaxBytes = GLOBAL_INBOX_MAX_BYTES,
   responseMaxBuffered = RESPONSE_MAX_BUFFERED_BYTES,
   responseDrainWaitMs = RESPONSE_DRAIN_WAIT_MS,
+  responseMinDrainBytesPerS = RESPONSE_MIN_DRAIN_BYTES_PER_S,
   responseIdleMs = RESPONSE_IDLE_MS,
 } = {}) {
   const lastPoll = new Map();   // daemonId -> ms epoch of last claim poll (pruned by age)
@@ -268,8 +275,9 @@ export function createTunnel({
      *  Backpressure: past RESPONSE_MAX_BUFFERED_BYTES the post is answered
      *  only once the client's socket drains, so a slow-but-alive client
      *  paces the daemon instead of growing relay memory; a client that does
-     *  not drain within the deadline is dropped and the daemon hears 429
-     *  client_slow. */
+     *  not drain within the deadline (RESPONSE_DRAIN_WAIT_MS, or the backlog
+     *  at RESPONSE_MIN_DRAIN_BYTES_PER_S if that is longer) is dropped and
+     *  the daemon hears 429 client_slow. */
     async daemonFrames(requestId, daemonId, chunk, done) {
       const p = assertAnswerable(requestId, daemonId);
       if (!p.res.headersSent) {
@@ -282,7 +290,11 @@ export function createTunnel({
       if (chunk.length > 0) {
         const buffered = p.res.writableLength ?? 0;
         if (buffered > 0 && buffered + chunk.length > responseMaxBuffered) {
-          const drained = await waitForDrain(p.res, responseDrainWaitMs);
+          // The daemon is being paced, not silent: its idle deadline does
+          // not run while it waits here (re-armed below once it may write).
+          clearTimeout(p.idleTimer);
+          const waitMs = Math.max(responseDrainWaitMs, Math.ceil((buffered / responseMinDrainBytesPerS) * 1000));
+          const drained = await waitForDrain(p.res, waitMs);
           if (p.done) throw new ApiError(410, 'client_gone');         // left (or idled out) while we waited
           if (!drained) {
             fail(requestId, 429, 'client_slow');                      // destroys the client's stream (truncation, never a clean end)

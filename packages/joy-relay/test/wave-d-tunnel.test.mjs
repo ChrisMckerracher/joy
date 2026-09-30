@@ -16,7 +16,7 @@ let relay, base, port, tunnel, call, makeDaemon;
 
 beforeAll(async () => {
   relay = await startRelay({ tunnel: {
-    responseMaxBuffered: 1 * MIB, responseDrainWaitMs: 300,
+    responseMaxBuffered: 1 * MIB, responseDrainWaitMs: 300, responseMinDrainBytesPerS: 512 * 1024,
     globalMaxRequests: 20, globalMaxBytes: 4 * MIB,
   } });
   ({ base, tunnel, call, makeDaemon } = relay);
@@ -159,6 +159,31 @@ describe('(1) response path is bounded: a stalled client paces, then loses, the 
     expect(body.length).toBe(N * MIB);
     for (let i = 0; i < N; i++) expect(body[i * MIB]).toBe(i);
   });
+});
+
+describe('(1b) a client slower than the drain deadline, but draining, is waited for', () => {
+  it('a trickling reader (a phone on lossy LTE) gets every byte; only a stall is client_slow', async () => {
+    const d = makeDaemon('mach-f1c'); await d.acquire(); await attach(d);
+    const { socket } = await rawPost('/joy/v2/machines/mach-f1c/http', { authorization: 'Bearer app-token' }, 1, 1);
+    // Read one chunk every 20 ms: far too slow to empty the 1 MiB backlog
+    // within the flat 300 ms deadline, but well above the 512 KiB/s floor
+    // this relay treats as alive, so it is waited for.
+    socket.pause();
+    let received = 0;
+    socket.on('data', (c) => { received += c.length; socket.pause(); });
+    const trickle = setInterval(() => socket.resume(), 20);
+    const [req] = await d.claim('tunnel', { waitMs: 2000 });
+    const FRAME = 128 * 1024; const N = 96; // 12 MiB
+    try {
+      for (let i = 0; i < N; i++) {
+        const r = await d.frames(req.requestId, Buffer.alloc(FRAME, i), false);
+        expect(r.status, `frame ${i}: ${JSON.stringify(r.json)}`).toBe(200);
+      }
+      expect((await d.frames(req.requestId, Buffer.alloc(0), true)).status).toBe(200);
+      for (let i = 0; i < 1000 && received < N * FRAME; i++) await sleep(20);
+      expect(received).toBeGreaterThanOrEqual(N * FRAME);
+    } finally { clearInterval(trickle); socket.destroy(); }
+  }, 60_000);
 });
 
 describe('(2) admission happens before the body is buffered', () => {
