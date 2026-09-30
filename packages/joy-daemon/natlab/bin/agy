@@ -1,0 +1,18 @@
+#!/usr/bin/env node
+// Stand-in for the `agy` CLI in the NAT lab: one process per turn, the prompt
+// as one NDJSON line on stdin, the answer as agy's NDJSON on stdout. It
+// replies "re: <prompt>" and appends the prompt to turns.log in the session's
+// folder, so a test can read back a file the agent wrote.
+import { appendFileSync } from "node:fs";
+if (process.argv.includes("--version")) { console.log("agy 0.0.0-natlab"); process.exit(0); }
+let input = "";
+process.stdin.on("data", (d) => { input += d; });
+process.stdin.on("end", () => {
+  let text = "";
+  try { text = String(JSON.parse(input.split("\n").find(Boolean) ?? "{}").message?.content ?? ""); } catch { /* empty turn */ }
+  appendFileSync("turns.log", text + "\n");
+  const out = (x) => process.stdout.write(JSON.stringify(x) + "\n");
+  out({ event: "init", conversation_id: "natlab-conversation" });
+  out({ event: "step_update", step_update: { step_index: 0, step_type: "agent_response", state: "DONE", text_delta: `re: ${text}` } });
+  out({ event: "result", result: { status: "SUCCESS", usage: { input_tokens: 1, output_tokens: 1 } } });
+});

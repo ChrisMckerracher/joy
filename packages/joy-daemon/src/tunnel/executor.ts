@@ -88,12 +88,124 @@ export function resolveLocalPath(targetBase: string, p: unknown): string | null 
   } catch { return null; }
 }
 
+/** What one sealed exchange needs, whichever transport carried it. */
+export interface SealedDispatch {
+  key: Uint8Array;
+  /** ONE guard per daemon, shared by every transport: a request recorded on
+   *  the relay path must not replay over a direct path, or the reverse. */
+  seen: SeenStreamIds;
+  targetBase: () => string;
+  targetHeaders?: Record<string, string>;
+  log: (line: string) => void;
+}
+
+/** Open one sealed request, refuse it (sealed, bound) when it is stale,
+ *  replayed or aimed off the local surface, else dispatch it there and stream
+ *  the sealed response to `emit` as the local surface produces it. The relay
+ *  executor and the direct transport (direct.ts) both run exactly this. A
+ *  throwing `emit` (the carrier is gone) ends the exchange and cancels the
+ *  local response. */
+export async function executeSealed(
+  d: SealedDispatch,
+  payload: Uint8Array,
+  emit: (bytes: Uint8Array, done: boolean) => Promise<void>,
+  tag: string,
+): Promise<void> {
+  // Every response head names the request it answers (wire.ts: binding) —
+  // the client refuses a response bound to any other request, so a relay
+  // cannot answer request B with the bytes it recorded for request A.
+  const r = requestBinding(payload);
+  let head: RequestHead, body: Uint8Array;
+  try {
+    ({ head, body } = openHeadAndBody<RequestHead>(d.key, payload));
+  } catch (e) {
+    // Unsealable request (wrong client key, corrupted in transit): answer
+    // sealed with OUR key so a legitimate client still gets a readable 400;
+    // an illegitimate one learns nothing it could not already infer.
+    const w = new SealedWriter(d.key);
+    const headBytes = new TextEncoder().encode(JSON.stringify({ s: 400, h: { "x-tunnel-error": e instanceof TamperError ? "unsealable" : "bad_request" }, r } satisfies ResponseHead));
+    await emit(Buffer.concat([w.header(), w.push(headBytes, true)]), true);
+    return;
+  }
+
+  // The request is authentic — now is it FRESH? The relay can re-post a
+  // recorded request (same stream id) or hold one back (old `t`); either
+  // gets a sealed 409 bound to it and is never dispatched. Checked only
+  // after a successful open so a spliced stream id cannot poison the guard.
+  const refusal = d.seen.seenOrRecord(r) ? "replayed_request" : staleReason(head.t);
+  if (refusal) {
+    const body = new TextEncoder().encode(JSON.stringify({ error: refusal }));
+    await emit(sealResponse(d.key, { s: 409, h: { "content-type": "application/json", "x-tunnel-error": refusal }, r }, body), true);
+    return;
+  }
+
+  // The path must land on the LOCAL surface (#119) — a sealed 400 otherwise,
+  // and the daemon token never leaves the loopback.
+  const target = resolveLocalPath(d.targetBase(), head.p);
+  if (target === null) {
+    d.log(`tunnel request ${tag}: refused path ${JSON.stringify(String(head.p).slice(0, 120))} — not a local surface path (#119)`);
+    const body = new TextEncoder().encode(JSON.stringify({ error: "bad_path" }));
+    await emit(sealResponse(d.key, { s: 400, h: { "content-type": "application/json", "x-tunnel-error": "bad_path" }, r }, body), true);
+    return;
+  }
+
+  // Dispatch to the local surface; network errors become a sealed 502.
+  let status = 502; let respHeaders: Record<string, string> = { "x-tunnel-error": "daemon_fetch_failed" };
+  let respBody: ReadableStream<Uint8Array> | null = null;
+  try {
+    const h: Record<string, string> = { ...d.targetHeaders };
+    for (const [k, v] of Object.entries(head.h ?? {})) if (!STRIP.has(k.toLowerCase())) h[k] = v;
+    const resp = await fetch(target, {
+      method: head.m, headers: h,
+      body: body.length > 0 ? (body as any) : undefined,
+    });
+    status = resp.status;
+    respHeaders = {};
+    resp.headers.forEach((v, k) => { if (!STRIP.has(k.toLowerCase())) respHeaders[k] = v; });
+    respBody = resp.body;
+  } catch { /* sealed 502 below */ }
+
+  // Stream the response back: head frame first, then body chunks as the
+  // local surface produces them — this is what makes SSE and large files
+  // work through the tunnel without buffering.
+  const w = new SealedWriter(d.key);
+  const headBytes = new TextEncoder().encode(JSON.stringify({ s: status, h: respHeaders, r } satisfies ResponseHead));
+  if (respBody === null) {
+    await emit(Buffer.concat([w.header(), w.push(headBytes, true)]), true);
+    return;
+  }
+  let pendingWire: Uint8Array[] = [w.header(), w.push(headBytes, false)];
+  const reader = respBody.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      let v = value as Uint8Array;
+      for (let off = 0; off < v.length; off += CHUNK_MAX) {
+        pendingWire.push(w.push(v.subarray(off, Math.min(off + CHUNK_MAX, v.length)), false));
+      }
+      // Flush per read — keeps memory flat and latency low for SSE.
+      await emit(Buffer.concat(pendingWire.map(Buffer.from)), false);
+      pendingWire = [];
+    }
+    pendingWire.push(w.push(new Uint8Array(0), true));
+    await emit(Buffer.concat(pendingWire.map(Buffer.from)), true);
+  } finally {
+    // A frame post that throws (404 request_gone, 403 wrong_daemon, relay
+    // down) ends the exchange — release the LOCAL response too. Without
+    // this a local SSE stream was read to nobody for as long as the local
+    // surface kept writing (#83). Cancelling a finished reader is a no-op.
+    await reader.cancel().catch(() => {});
+  }
+}
+
 export function startTunnelExecutor(opts: ExecutorOpts): ExecutorHandle {
   const log = opts.log ?? (() => {});
   /** The local surface as it stands NOW (#588) — never captured once. */
   const targetBase = typeof opts.targetBase === "function" ? opts.targetBase : () => opts.targetBase as string;
   const key = deriveTunnelKey(opts.machineKey, opts.machineId);
   const seen = opts.replayGuard ?? new SeenStreamIds();
+  const dispatch: SealedDispatch = { key, seen, targetBase, targetHeaders: opts.targetHeaders, log };
   let stopped = false;
   let lease: { id: string; token: string } | null = null;
   let renewTimer: ReturnType<typeof setInterval> | null = null;
@@ -162,93 +274,7 @@ export function startTunnelExecutor(opts: ExecutorOpts): ExecutorHandle {
       }
     };
 
-    const payload = Buffer.from(payloadB64, "base64");
-    // Every response head names the request it answers (wire.ts: binding) —
-    // the client refuses a response bound to any other request, so a relay
-    // cannot answer request B with the bytes it recorded for request A.
-    const r = requestBinding(payload);
-    let head: RequestHead, body: Uint8Array;
-    try {
-      ({ head, body } = openHeadAndBody<RequestHead>(key, payload));
-    } catch (e) {
-      // Unsealable request (wrong client key, corrupted in transit): answer
-      // sealed with OUR key so a legitimate client still gets a readable 400;
-      // an illegitimate one learns nothing it could not already infer.
-      const w = new SealedWriter(key);
-      const headBytes = new TextEncoder().encode(JSON.stringify({ s: 400, h: { "x-tunnel-error": e instanceof TamperError ? "unsealable" : "bad_request" }, r } satisfies ResponseHead));
-      await postFrames(Buffer.concat([w.header(), w.push(headBytes, true)]), true);
-      return;
-    }
-
-    // The request is authentic — now is it FRESH? The relay can re-post a
-    // recorded request (same stream id) or hold one back (old `t`); either
-    // gets a sealed 409 bound to it and is never dispatched. Checked only
-    // after a successful open so a spliced stream id cannot poison the guard.
-    const refusal = seen.seenOrRecord(r) ? "replayed_request" : staleReason(head.t);
-    if (refusal) {
-      const body = new TextEncoder().encode(JSON.stringify({ error: refusal }));
-      await postFrames(sealResponse(key, { s: 409, h: { "content-type": "application/json", "x-tunnel-error": refusal }, r }, body), true);
-      return;
-    }
-
-    // The path must land on the LOCAL surface (#119) — a sealed 400 otherwise,
-    // and the daemon token never leaves the loopback.
-    const target = resolveLocalPath(targetBase(), head.p);
-    if (target === null) {
-      log(`tunnel request ${requestId}: refused path ${JSON.stringify(String(head.p).slice(0, 120))} — not a local surface path (#119)`);
-      const body = new TextEncoder().encode(JSON.stringify({ error: "bad_path" }));
-      await postFrames(sealResponse(key, { s: 400, h: { "content-type": "application/json", "x-tunnel-error": "bad_path" }, r }, body), true);
-      return;
-    }
-
-    // Dispatch to the local surface; network errors become a sealed 502.
-    let status = 502; let respHeaders: Record<string, string> = { "x-tunnel-error": "daemon_fetch_failed" };
-    let respBody: ReadableStream<Uint8Array> | null = null;
-    try {
-      const h: Record<string, string> = { ...opts.targetHeaders };
-      for (const [k, v] of Object.entries(head.h ?? {})) if (!STRIP.has(k.toLowerCase())) h[k] = v;
-      const resp = await fetch(target, {
-        method: head.m, headers: h,
-        body: body.length > 0 ? (body as any) : undefined,
-      });
-      status = resp.status;
-      respHeaders = {};
-      resp.headers.forEach((v, k) => { if (!STRIP.has(k.toLowerCase())) respHeaders[k] = v; });
-      respBody = resp.body;
-    } catch { /* sealed 502 below */ }
-
-    // Stream the response back: head frame first, then body chunks as the
-    // local surface produces them — this is what makes SSE and large files
-    // work through the tunnel without buffering.
-    const w = new SealedWriter(key);
-    const headBytes = new TextEncoder().encode(JSON.stringify({ s: status, h: respHeaders, r } satisfies ResponseHead));
-    if (respBody === null) {
-      await postFrames(Buffer.concat([w.header(), w.push(headBytes, true)]), true);
-      return;
-    }
-    let pendingWire: Uint8Array[] = [w.header(), w.push(headBytes, false)];
-    const reader = respBody.getReader();
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        let v = value as Uint8Array;
-        for (let off = 0; off < v.length; off += CHUNK_MAX) {
-          pendingWire.push(w.push(v.subarray(off, Math.min(off + CHUNK_MAX, v.length)), false));
-        }
-        // Flush per read — keeps memory flat and latency low for SSE.
-        await postFrames(Buffer.concat(pendingWire.map(Buffer.from)), false);
-        pendingWire = [];
-      }
-      pendingWire.push(w.push(new Uint8Array(0), true));
-      await postFrames(Buffer.concat(pendingWire.map(Buffer.from)), true);
-    } finally {
-      // A frame post that throws (404 request_gone, 403 wrong_daemon, relay
-      // down) ends the exchange — release the LOCAL response too. Without
-      // this a local SSE stream was read to nobody for as long as the local
-      // surface kept writing (#83). Cancelling a finished reader is a no-op.
-      await reader.cancel().catch(() => {});
-    }
+    await executeSealed(dispatch, Buffer.from(payloadB64, "base64"), postFrames, requestId);
   }
 
   /** The lease this executor should present: the lane's (borrowed) or its

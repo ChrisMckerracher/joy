@@ -12,7 +12,9 @@ joy is three programs. You run two of them yourself and use the third.
 | **The daemon** | Each computer you want agents on | Starts and watches agent sessions, types your messages into them, reads their output, and reports everything to the relay. Ships with the `joy` command-line tool. |
 | **The relay** | One server you host or are given | Holds your account, your list of machines, the message queue for each session, and delivers push notifications. It passes encrypted data between the app and your daemons and cannot read it. |
 
-The app and the daemons never connect to each other directly. Both connect out to the relay, so your machines do not need open ports, a public address, or a VPN. A laptop behind a home router works the same as a cloud server.
+The app and the daemons both connect out to the relay, so your machines do not need open ports, a public address, or a VPN. A laptop behind a home router works the same as a cloud server.
+
+When the relay offers STUN, a client can also open a direct connection to a machine, with the relay introducing the two ends. That connection carries what the client reads from the machine (files, git, the terminal view, session state, messages to a session) and keeps working if the relay goes down. When no direct path can be made, everything goes through the relay as usual. The app does not open direct connections yet; daemons accept them from clients that do. See [Direct connections](../reference/security.md#direct-connections).
 
 ## How a message travels
 

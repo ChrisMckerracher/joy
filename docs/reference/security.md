@@ -107,6 +107,23 @@ In these modes the agent runs commands and edits files without asking first, wit
 
 Anyone who can sign in to your account can start sessions and send commands to every paired machine. Protecting your backup code protects your machines.
 
+## Direct connections
+
+When the relay runs STUN (`JOY_RELAY_STUN_PORT`), a client can reach a machine without the relay in the path:
+
+1. Each side asks the relay's STUN port for its public address.
+2. The client sends a connection offer to the daemon through the encrypted tunnel above, and the daemon answers the same way. The relay carries both but cannot read them, so it cannot change the certificate fingerprints inside them.
+3. Both sides send UDP to each other's public address at the same moment, which opens a path through both routers (WebRTC's ICE). The connection is DTLS-encrypted and pinned to the two fingerprints from step 2.
+4. Requests over it are the same sealed, replay-checked tunnel requests the relay would carry. The daemon runs them through exactly the same checks.
+
+What changes:
+
+- **The relay sees less.** It sees the offer and answer go past as opaque tunnel traffic, and STUN requests from your devices' and machines' addresses. It does not see the traffic that follows, or even how much of it there is.
+- **Your devices and machines see each other's public IP addresses.** They have to, to connect.
+- **The machine opens UDP ports.** They accept only connections whose credentials were in the sealed offer. `JOY_DIRECT_PORT_RANGE` pins them to a range. `JOY_DIRECT=0` turns direct connections off.
+
+When the two routers cannot be punched through (much carrier-grade and corporate NAT), no direct connection forms and everything goes through the relay as before.
+
 ## Known risks in this version
 
 These are gaps you should know about before you rely on joy for sensitive work. Each is a deliberate trade-off or a known limitation of the current release, not a hidden behaviour.
@@ -122,6 +139,10 @@ Run the daemon only on machines where you are the only user, or where you trust 
 ### Push notifications are plaintext
 
 Titles and bodies pass through the relay, Expo, and Apple or Google unencrypted. By default they carry only the machine and folder name and a fixed word such as "Finished". An agent's own notification carries the headline and detail it wrote. See [What push notifications expose](#what-push-notifications-expose).
+
+### A direct connection outlives the relay's view of it
+
+A direct connection is authorised once, when it is set up through the relay. After that the relay cannot close it: signing a device out on the relay does not end a direct connection that device already has open. It ends when either side drops it, the network path breaks, or the daemon restarts. Restart the daemon to cut every direct connection to a machine at once.
 
 ### The relay's API docs page is password-protected, not secret
 

@@ -23,6 +23,9 @@ import { initRelay, loadCredentials } from "./relay/relay.ts";
 import { migrateLegacyEnvFile, applyEnvStore } from "./domain/envStore";
 import { startNucleusLane } from "./relay/nucleusLane.ts";
 import { startTunnelExecutor } from "./tunnel/executor.ts";
+import { SeenStreamIds } from "./tunnel/replayGuard.ts";
+import { deriveTunnelKey } from "./tunnel/sealedStream.ts";
+import { createDirectServer, setDirectServer, iceServersFor, portRangeFromEnv } from "./tunnel/direct.ts";
 import { acquireSingleton, SingletonError } from "./singleton";
 import { joyStateDir, joyRelayUrl, joyRelayKey, joyHomeDir, joyRelayCredsDir, joyRelayUrlOrNull, NoRelayConfiguredError } from "./paths";
 import { ledgerFor } from "./domain/ledger";
@@ -239,7 +242,14 @@ if (process.env.JOY_V2_LANE !== "0") {
   // so it starts after startHttpServer bound its port.
   const tunnelCreds = loadCredentials();
   if (tunnelCreds && tunnelCreds.encryption.type === "dataKey" && tunnelCreds.encryption.machineKey.length === 32) {
+    // One replay guard for every transport: a request the relay recorded must
+    // not run again over a direct channel, or the reverse.
+    const replayGuard = new SeenStreamIds();
+    const tunnelLog = (line: string) => process.stderr.write(line + "\n");
+    const tunnelTargetBase = () => `http://127.0.0.1:${boundPort}`;
+    const tunnelTargetHeaders = { "X-Joy-Token": SERVER_TOKEN };
     startTunnelExecutor({
+      replayGuard,
       relayUrl: joyRelayUrl(),
       accountToken: tunnelCreds.token,
       machineKey: tunnelCreds.encryption.machineKey,
@@ -251,11 +261,34 @@ if (process.env.JOY_V2_LANE !== "0") {
       // executor used to hold http://127.0.0.1:0 forever, so every tunneled
       // files / git / terminal / usage request failed with a sealed 502
       // while the local HTTP server was healthy.
-      targetBase: () => `http://127.0.0.1:${boundPort}`,
-      targetHeaders: { "X-Joy-Token": SERVER_TOKEN },
-      log: (line) => process.stderr.write(line + "\n"),
+      targetBase: tunnelTargetBase,
+      targetHeaders: tunnelTargetHeaders,
+      log: tunnelLog,
     });
     process.stderr.write("[tunnel] executor started\n");
+
+    // Direct tunnel: the same sealed exchanges over a WebRTC channel punched
+    // between a client and this machine (tunnel/direct.ts), so its sessions
+    // keep answering while the relay is unreachable. The relay only supplies
+    // STUN and carries the sealed offer/answer. JOY_DIRECT=0 turns it off.
+    if (process.env.JOY_DIRECT !== "0") {
+      const relayUrl = joyRelayUrl();
+      let ice: { at: number; servers: string[] } | null = null;
+      setDirectServer(createDirectServer({
+        dispatch: {
+          key: deriveTunnelKey(tunnelCreds.encryption.machineKey, tunnelCreds.machineId),
+          seen: replayGuard,
+          targetBase: tunnelTargetBase,
+          targetHeaders: tunnelTargetHeaders,
+          log: tunnelLog,
+        },
+        config: async () => {
+          if (!ice || Date.now() - ice.at > 5 * 60_000) ice = { at: Date.now(), servers: await iceServersFor(relayUrl) };
+          return { iceServers: ice.servers, portRange: portRangeFromEnv() };
+        },
+      }));
+      process.stderr.write("[direct] direct tunnel enabled\n");
+    }
   } else {
     process.stderr.write("[tunnel] no dataKey machineKey — executor not started\n");
   }

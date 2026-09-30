@@ -49,6 +49,9 @@ Every command uses the same codes, so a script can branch on them.
 | `JOY_SESSION_ID` | Set by the daemon inside every agent session. The CLI uses it to stamp who sent a message (see [send](#send)). You do not set it yourself. |
 | `JOY_RELAY_ACCESS_KEY` | The relay's perimeter key, for a relay that is gated. Normally `joy auth` stores it for you. |
 | `PORT` | The daemon's local port when no `daemon.json` exists yet. Default 4997. |
+| `JOY_DIRECT` | `0` turns off direct connections: the daemon then answers only through the relay. See [Direct connections](security.md#direct-connections). |
+| `JOY_ICE_SERVERS` | STUN servers for direct connections, comma-separated (`stun:host:port`). Default: the relay's own STUN port, when the relay offers one. |
+| `JOY_DIRECT_PORT_RANGE` | Keep direct connections on these local UDP ports, such as `50000-50100`, to match a firewall rule or a container's published ports. |
 
 ### Files
 

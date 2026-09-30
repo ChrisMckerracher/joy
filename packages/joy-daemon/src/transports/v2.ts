@@ -25,6 +25,7 @@ import { readAgentConfig, writeAgentConfigRaw, applyAgentConfigAssignments, fetc
 import { fetchClaudeLimits, readCodexLimits, claudeLimitRows } from "../domain/limits";
 import { readGitStatus } from "../domain/gitStatus";
 import { TextAccumulator } from "../domain/textStream";
+import { directServer } from "../tunnel/direct";
 
 import { HARNESSES, HARNESS_CAPABILITIES, type Harness } from "../domain/harnessCapabilities";
 
@@ -231,6 +232,24 @@ route("GET", "/v2/usage", async (ctx) => {
     return ok({ error: "unsupported_filter", detail: "usage cannot be filtered by model; read models[] from the full report" }, 422);
   }
   return ok(await mcall("usage", ctx.registry, { period: ctx.url.searchParams.get("period") ?? "30days" }));
+});
+
+// ── machine: direct tunnel ──────────────────────────────────────────────────
+// A client's WebRTC offer, arriving sealed through the relay tunnel like any
+// other request (so only a holder of this machine's tunnel key gets here),
+// answered with ours. The DTLS fingerprints in the two SDPs pin the punched
+// channel to exactly these two ends; the relay carried both and could read
+// neither. Mutating, so the local token is required like every POST.
+route("POST", "/v2/direct/offer", async (_ctx, _p, body) => {
+  const server = directServer();
+  if (!server) return ok({ error: "direct_unavailable" }, 404);
+  const sdp = body.sdp;
+  if (typeof sdp !== "string" || sdp.length === 0 || sdp.length > 64 * 1024) return ok({ error: "bad_offer" }, 400);
+  try {
+    return ok({ sdp: await server.answer(sdp) });
+  } catch (e) {
+    return ok({ error: "direct_failed", detail: e instanceof Error ? e.message : String(e) }, 502);
+  }
 });
 
 // ── machine: harnesses ──────────────────────────────────────────────────────
